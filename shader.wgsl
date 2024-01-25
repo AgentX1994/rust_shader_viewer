@@ -17,13 +17,16 @@ struct CameraUniform {
 @group(1) @binding(0)
 var<uniform> camera: CameraUniform;
 
+@group(1) @binding(1)
+var<uniform> model: mat4x4<f32>;
+
 @vertex
 fn vs_main(
-    model: VertexInput
+    input: VertexInput
 ) -> VertexOutput {
     var out: VertexOutput;
-    out.clip_position = camera.view_proj * vec4<f32>(model.position, 1.0);
-    out.tex_coords = model.tex_coords;
+    out.clip_position = camera.view_proj * model * vec4<f32>(input.position, 1.0);
+    out.tex_coords = input.tex_coords;
     return out;
 }
 
