@@ -24,9 +24,6 @@ struct CameraUniform {
 @group(1) @binding(0)
 var<uniform> camera: CameraUniform;
 
-@group(1) @binding(1)
-var<uniform> model: mat4x4<f32>;
-
 @vertex
 fn vs_main(
     input: VertexInput,

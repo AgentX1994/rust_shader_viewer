@@ -70,12 +70,21 @@ const INDICES: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4];
 struct Instance {
     position: cgmath::Vector3<f32>,
     rotation: cgmath::Quaternion<f32>,
+    rotation_speed: f32,
+    rotation_axis: cgmath::Vector3<f32>,
 }
 
 impl Instance {
     fn to_raw(&self) -> [[f32; 4]; 4] {
         (cgmath::Matrix4::from_translation(self.position) * cgmath::Matrix4::from(self.rotation))
             .into()
+    }
+
+    fn update(&mut self) {
+        self.rotation = cgmath::Quaternion::from_axis_angle(
+            self.rotation_axis,
+            cgmath::Rad(self.rotation_speed),
+        ) * self.rotation;
     }
 
     fn desc() -> wgpu::VertexBufferLayout<'static> {
@@ -135,7 +144,6 @@ struct CameraUniform {
 
 impl Default for CameraUniform {
     fn default() -> Self {
-        use cgmath::SquareMatrix;
         Self {
             view_proj: cgmath::Matrix4::identity().into(),
         }
@@ -212,7 +220,6 @@ impl CameraController {
     }
 
     fn update_camera(&self, camera: &mut Camera) {
-        use cgmath::InnerSpace;
         let forward_unnorm = camera.target - camera.eye;
         let forward = forward_unnorm.normalize();
         let forward_mag = forward_unnorm.magnitude();
@@ -244,31 +251,6 @@ impl CameraController {
     }
 }
 
-struct ModelController {
-    speed: f32,
-    current_angle_rads: f32,
-}
-
-impl ModelController {
-    fn new(speed: f32) -> Self {
-        Self {
-            speed,
-            current_angle_rads: 0.0,
-        }
-    }
-
-    fn update(&mut self) {
-        self.current_angle_rads += self.speed;
-        if self.current_angle_rads >= std::f32::consts::TAU {
-            self.current_angle_rads -= std::f32::consts::TAU;
-        }
-    }
-
-    fn get_rotation_matrix(&self) -> [[f32; 4]; 4] {
-        return cgmath::Matrix4::from_angle_y(cgmath::Rad(self.current_angle_rads)).into();
-    }
-}
-
 struct State<'a> {
     surface: wgpu::Surface<'a>,
     device: wgpu::Device,
@@ -276,11 +258,9 @@ struct State<'a> {
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
     camera_controller: CameraController,
-    model_controller: ModelController,
     camera: Camera,
     camera_uniform: CameraUniform,
     camera_buffer: wgpu::Buffer,
-    model_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     render_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
@@ -424,54 +404,28 @@ impl<'a> State<'a> {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let model_controller = ModelController::new(0.2);
-
-        let model_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Model buffer"),
-            contents: bytemuck::cast_slice(&model_controller.get_rotation_matrix()),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
         let camera_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Camera Bind Group Layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::VERTEX,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
+                    count: None,
+                }],
             });
 
         let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Camera Bind Group"),
             layout: &camera_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: camera_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: model_buffer.as_entire_binding(),
-                },
-            ],
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
+            }],
         });
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -504,7 +458,12 @@ impl<'a> State<'a> {
                         cgmath::Quaternion::from_axis_angle(position.normalize(), cgmath::Deg(45.0))
                     };
 
-                    Instance { position, rotation }
+                    Instance {
+                        position,
+                        rotation,
+                        rotation_speed: 0.025f32,
+                        rotation_axis: cgmath::Vector3::unit_y(),
+                    }
                 })
             })
             .collect::<Vec<Instance>>();
@@ -512,7 +471,7 @@ impl<'a> State<'a> {
         let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Instance Buffer"),
             contents: bytemuck::cast_slice(&instance_data),
-            usage: wgpu::BufferUsages::VERTEX,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         });
 
         let render_pipeline_layout =
@@ -576,11 +535,9 @@ impl<'a> State<'a> {
             config,
             size,
             camera_controller: CameraController::new(0.2),
-            model_controller,
             camera,
             camera_uniform,
             camera_buffer,
-            model_buffer,
             camera_bind_group,
             render_pipeline,
             vertex_buffer,
@@ -635,16 +592,23 @@ impl<'a> State<'a> {
     fn update(&mut self) {
         self.camera_controller.update_camera(&mut self.camera);
         self.camera_uniform.update_view_projection(&self.camera);
-        self.model_controller.update();
         self.queue.write_buffer(
             &self.camera_buffer,
             0,
             bytemuck::cast_slice(&[self.camera_uniform]),
         );
+        for ele in &mut self.instances {
+            ele.update();
+        }
+        let instance_data = self
+            .instances
+            .iter()
+            .map(Instance::to_raw)
+            .collect::<Vec<_>>();
         self.queue.write_buffer(
-            &self.model_buffer,
+            &self.instance_buffer,
             0,
-            bytemuck::cast_slice(&self.model_controller.get_rotation_matrix()),
+            bytemuck::cast_slice(&instance_data),
         );
     }
 
