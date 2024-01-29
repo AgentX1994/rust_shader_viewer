@@ -7,6 +7,7 @@ use winit::{
     window::{Window, WindowBuilder},
 };
 
+use cgmath::prelude::*;
 use log::{error, info};
 use wgpu::util::DeviceExt;
 
@@ -65,6 +66,48 @@ const VERTICES: &[Vertex] = &[
 ];
 
 const INDICES: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4];
+
+struct Instance {
+    position: cgmath::Vector3<f32>,
+    rotation: cgmath::Quaternion<f32>,
+}
+
+impl Instance {
+    fn to_raw(&self) -> [[f32; 4]; 4] {
+        (cgmath::Matrix4::from_translation(self.position) * cgmath::Matrix4::from(self.rotation))
+            .into()
+    }
+
+    fn desc() -> wgpu::VertexBufferLayout<'static> {
+        use std::mem;
+        wgpu::VertexBufferLayout {
+            array_stride: mem::size_of::<[[f32; 4]; 4]>() as u64,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &[
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x4,
+                    offset: 0,
+                    shader_location: 5,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x4,
+                    offset: mem::size_of::<[f32; 4]>() as u64,
+                    shader_location: 6,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x4,
+                    offset: mem::size_of::<[f32; 8]>() as u64,
+                    shader_location: 7,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x4,
+                    offset: mem::size_of::<[f32; 12]>() as u64,
+                    shader_location: 8,
+                },
+            ],
+        }
+    }
+}
 
 #[rustfmt::skip]
 pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
@@ -244,6 +287,8 @@ struct State<'a> {
     index_buffer: wgpu::Buffer,
     number_of_vertices: u32,
     number_of_indices: u32,
+    instances: Vec<Instance>,
+    instance_buffer: wgpu::Buffer,
     diffuse_bind_group: wgpu::BindGroup,
     diffuse_texture: texture::Texture,
     diffuse_bind_group2: wgpu::BindGroup,
@@ -434,6 +479,42 @@ impl<'a> State<'a> {
             source: wgpu::ShaderSource::Wgsl(include_str!("../shader.wgsl").into()),
         });
 
+        // Create instances
+        const NUM_INSTANCE_PER_ROW: usize = 10;
+        const INSTANCE_DISPLACEMENT: cgmath::Vector3<f32> = cgmath::Vector3::new(
+            NUM_INSTANCE_PER_ROW as f32 * 0.5,
+            0.0,
+            NUM_INSTANCE_PER_ROW as f32 * 0.5,
+        );
+
+        let instances = (0..NUM_INSTANCE_PER_ROW)
+            .flat_map(|z| {
+                (0..NUM_INSTANCE_PER_ROW).map(move |x| {
+                    let position = cgmath::Vector3 {
+                        x: x as f32,
+                        y: 0.0,
+                        z: z as f32,
+                    } - INSTANCE_DISPLACEMENT;
+                    let rotation = if position.is_zero() {
+                        cgmath::Quaternion::from_axis_angle(
+                            cgmath::Vector3::unit_z(),
+                            cgmath::Deg(0.0),
+                        )
+                    } else {
+                        cgmath::Quaternion::from_axis_angle(position.normalize(), cgmath::Deg(45.0))
+                    };
+
+                    Instance { position, rotation }
+                })
+            })
+            .collect::<Vec<Instance>>();
+        let instance_data = instances.iter().map(Instance::to_raw).collect::<Vec<_>>();
+        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Instance Buffer"),
+            contents: bytemuck::cast_slice(&instance_data),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Pipeline layout"),
@@ -447,7 +528,7 @@ impl<'a> State<'a> {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: "vs_main",
-                buffers: &[Vertex::layout()],
+                buffers: &[Vertex::layout(), Instance::desc()],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
@@ -506,6 +587,8 @@ impl<'a> State<'a> {
             index_buffer,
             number_of_vertices: VERTICES.len() as u32,
             number_of_indices: INDICES.len() as u32,
+            instances,
+            instance_buffer,
             diffuse_bind_group,
             diffuse_texture,
             diffuse_bind_group2,
@@ -598,8 +681,9 @@ impl<'a> State<'a> {
             }
             render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            render_pass.draw_indexed(0..self.number_of_indices, 0, 0..1);
+            render_pass.draw_indexed(0..self.number_of_indices, 0, 0..self.instances.len() as u32);
         }
 
         self.queue.submit(std::iter::once(cmd_encoder.finish()));
