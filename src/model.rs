@@ -17,7 +17,7 @@ pub struct ModelVertex {
 impl Vertex for ModelVertex {
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         use std::mem;
-        return wgpu::VertexBufferLayout {
+        wgpu::VertexBufferLayout {
             array_stride: mem::size_of::<ModelVertex>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &[
@@ -37,7 +37,7 @@ impl Vertex for ModelVertex {
                     shader_location: 2,
                 },
             ],
-        };
+        }
     }
 }
 
@@ -104,7 +104,7 @@ where
         self.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
         self.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
         self.set_bind_group(0, &material.bind_group, &[]);
-        self.set_bind_group(1, &camera_bind_group, &[]);
+        self.set_bind_group(1, camera_bind_group, &[]);
         self.draw_indexed(0..mesh.number_of_elements, 0, instances);
     }
 

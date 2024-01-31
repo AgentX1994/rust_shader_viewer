@@ -110,7 +110,7 @@ impl Camera {
     fn build_view_project_matrix(&self) -> cgmath::Matrix4<f32> {
         let view = cgmath::Matrix4::look_at_rh(self.eye, self.target, self.up);
         let proj = cgmath::perspective(cgmath::Deg(self.fovy), self.aspect, self.nearz, self.farz);
-        return OPENGL_TO_WGPU_MATRIX * proj * view;
+        OPENGL_TO_WGPU_MATRIX * proj * view
     }
 }
 
@@ -217,11 +217,6 @@ struct State<'a> {
     model: model::Model,
     instances: Vec<Instance>,
     instance_buffer: wgpu::Buffer,
-    diffuse_bind_group: wgpu::BindGroup,
-    diffuse_texture: texture::Texture,
-    diffuse_bind_group2: wgpu::BindGroup,
-    diffuse_texture2: texture::Texture,
-    chosen_texture: u8,
 }
 
 impl<'a> State<'a> {
@@ -262,8 +257,7 @@ impl<'a> State<'a> {
             .formats
             .iter()
             .copied()
-            .filter(|f| f.is_srgb())
-            .next()
+            .find(|f| f.is_srgb())
             .unwrap_or(surface_caps.formats[0]);
         let config = wgpu::SurfaceConfiguration {
             format: surface_format,
@@ -273,14 +267,6 @@ impl<'a> State<'a> {
         };
         surface.configure(&device, &config);
 
-        let diffuse_bytes = include_bytes!("../happy-tree.png");
-        let diffuse_texture =
-            texture::Texture::from_bytes(&device, &queue, diffuse_bytes, "Texture")
-                .expect("Error loading texture!");
-        let diffuse_bytes2 = include_bytes!("../texture-2.jpg");
-        let diffuse_texture2 =
-            texture::Texture::from_bytes(&device, &queue, diffuse_bytes2, "Texture2")
-                .expect("Error loading texture!");
         let depth_texture =
             texture::Texture::create_depth_texture(&device, &config, "depth_texture");
 
@@ -306,34 +292,6 @@ impl<'a> State<'a> {
                     },
                 ],
             });
-        let diffuse_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Bind Group"),
-            layout: &texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&diffuse_texture.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&diffuse_texture.sampler),
-                },
-            ],
-        });
-        let diffuse_bind_group2 = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Bind Group"),
-            layout: &texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&diffuse_texture2.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&diffuse_texture2.sampler),
-                },
-            ],
-        });
 
         let camera = Camera {
             eye: (0.0, 1.0, 2.0).into(),
@@ -385,12 +343,6 @@ impl<'a> State<'a> {
 
         // Create instances
         const NUM_INSTANCE_PER_ROW: usize = 10;
-        const INSTANCE_DISPLACEMENT: cgmath::Vector3<f32> = cgmath::Vector3::new(
-            NUM_INSTANCE_PER_ROW as f32 * 0.5,
-            0.0,
-            NUM_INSTANCE_PER_ROW as f32 * 0.5,
-        );
-
         let model = resources::load_model("cube.obj", &device, &queue, &texture_bind_group_layout)
             .await
             .expect("Failed to load model!");
@@ -401,7 +353,7 @@ impl<'a> State<'a> {
                 (0..NUM_INSTANCE_PER_ROW).map(move |x| {
                     let x = SPACE_BETWEEN * (x as f32 - NUM_INSTANCE_PER_ROW as f32 / 2.0);
                     let z = SPACE_BETWEEN * (z as f32 - NUM_INSTANCE_PER_ROW as f32 / 2.0);
-                    let position = cgmath::Vector3 { x: x, y: 0.0, z: z };
+                    let position = cgmath::Vector3 { x, y: 0.0, z };
                     let rotation = if position.is_zero() {
                         cgmath::Quaternion::from_axis_angle(
                             cgmath::Vector3::unit_z(),
@@ -491,11 +443,6 @@ impl<'a> State<'a> {
             model,
             instances,
             instance_buffer,
-            diffuse_bind_group,
-            diffuse_texture,
-            diffuse_bind_group2,
-            diffuse_texture2,
-            chosen_texture: 0u8,
         }
     }
 
@@ -525,14 +472,7 @@ impl<'a> State<'a> {
                         ..
                     },
                 ..
-            } => {
-                if self.chosen_texture == 0 {
-                    self.chosen_texture = 1;
-                } else {
-                    self.chosen_texture = 0;
-                }
-                true
-            }
+            } => false,
             _ => false,
         }
     }
@@ -593,11 +533,6 @@ impl<'a> State<'a> {
                 occlusion_query_set: None,
             });
             render_pass.set_pipeline(&self.render_pipeline);
-            if self.chosen_texture == 0 {
-                render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
-            } else {
-                render_pass.set_bind_group(0, &self.diffuse_bind_group2, &[]);
-            }
             render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
             render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
             let mesh = &self.model.meshes[0];
@@ -629,7 +564,7 @@ pub async fn run() {
             ref event,
             window_id: win_id,
         } if win_id == window_id => {
-            if !state.input(&event) {
+            if !state.input(event) {
                 match event {
                     WindowEvent::CloseRequested
                     | WindowEvent::KeyboardInput {
