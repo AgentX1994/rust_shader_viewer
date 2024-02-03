@@ -14,9 +14,10 @@ impl Texture {
         queue: &wgpu::Queue,
         bytes: &[u8],
         label: &str,
+        is_normal_map: bool,
     ) -> Result<Self> {
         let image = image::load_from_memory(bytes)?;
-        Self::from_image(device, queue, &image, label)
+        Self::from_image(device, queue, &image, label, is_normal_map)
     }
 
     pub fn from_image(
@@ -24,9 +25,15 @@ impl Texture {
         queue: &wgpu::Queue,
         image: &image::DynamicImage,
         label: &str,
+        is_normal_map: bool,
     ) -> Result<Self> {
         let rgba = image.to_rgba8();
         let dims = rgba.dimensions();
+        let format = if is_normal_map {
+            wgpu::TextureFormat::Rgba8Unorm
+        } else {
+            wgpu::TextureFormat::Rgba8UnormSrgb
+        };
 
         let texture_size = wgpu::Extent3d {
             width: dims.0,
@@ -39,7 +46,7 @@ impl Texture {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            format,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });

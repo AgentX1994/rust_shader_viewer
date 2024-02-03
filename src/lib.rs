@@ -45,10 +45,10 @@ impl Instance {
     }
 
     fn update(&mut self) {
-        self.rotation = cgmath::Quaternion::from_axis_angle(
-            self.rotation_axis,
-            cgmath::Rad(self.rotation_speed),
-        ) * self.rotation;
+        // self.rotation = cgmath::Quaternion::from_axis_angle(
+        //     self.rotation_axis,
+        //     cgmath::Rad(self.rotation_speed),
+        // ) * self.rotation;
     }
 
     fn desc() -> wgpu::VertexBufferLayout<'static> {
@@ -312,6 +312,7 @@ impl<'a> State<'a> {
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Bind Group Layout"),
                 entries: &[
+                    // diffuse texture
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
                         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -324,6 +325,23 @@ impl<'a> State<'a> {
                     },
                     wgpu::BindGroupLayoutEntry {
                         binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    // normal map
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,
