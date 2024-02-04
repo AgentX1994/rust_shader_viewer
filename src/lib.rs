@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use winit::{
     event::*,
@@ -11,12 +14,14 @@ use cgmath::prelude::*;
 use log::{error, info};
 use wgpu::util::DeviceExt;
 
+mod camera;
 mod light;
 mod model;
 mod pipeline;
 mod resources;
 mod texture;
 
+use camera::{Camera, CameraController, Projection};
 use light::LightUniform;
 use model::{LightRenderer, ModelRenderer, Vertex};
 use pipeline::RenderPipeline;
@@ -28,6 +33,7 @@ struct InstanceRaw {
     normal: [[f32; 3]; 3],
 }
 
+#[allow(dead_code)]
 struct Instance {
     position: cgmath::Vector3<f32>,
     rotation: cgmath::Quaternion<f32>,
@@ -99,24 +105,6 @@ impl Instance {
     }
 }
 
-#[rustfmt::skip]
-pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
-    1.0, 0.0, 0.0, 0.0,
-    0.0, 1.0, 0.0, 0.0,
-    0.0, 0.0, 0.5, 0.5,
-    0.0, 0.0, 0.0, 1.0,
-);
-
-struct Camera {
-    eye: cgmath::Point3<f32>,
-    target: cgmath::Point3<f32>,
-    up: cgmath::Vector3<f32>,
-    aspect: f32,
-    fovy: f32,
-    nearz: f32,
-    farz: f32,
-}
-
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 struct CameraUniform {
@@ -134,104 +122,9 @@ impl Default for CameraUniform {
 }
 
 impl CameraUniform {
-    fn update_view_projection(&mut self, camera: &Camera) {
-        self.view_position = camera.eye.to_homogeneous().into();
-        self.view_proj = camera.build_view_project_matrix().into();
-    }
-}
-
-impl Camera {
-    fn build_view_project_matrix(&self) -> cgmath::Matrix4<f32> {
-        let view = cgmath::Matrix4::look_at_rh(self.eye, self.target, self.up);
-        let proj = cgmath::perspective(cgmath::Deg(self.fovy), self.aspect, self.nearz, self.farz);
-        OPENGL_TO_WGPU_MATRIX * proj * view
-    }
-}
-
-struct CameraController {
-    speed: f32,
-    is_forward_pressed: bool,
-    is_backward_pressed: bool,
-    is_left_pressed: bool,
-    is_right_pressed: bool,
-}
-
-impl CameraController {
-    fn new(speed: f32) -> Self {
-        Self {
-            speed,
-            is_forward_pressed: false,
-            is_backward_pressed: false,
-            is_left_pressed: false,
-            is_right_pressed: false,
-        }
-    }
-
-    fn process_event(&mut self, event: &WindowEvent) -> bool {
-        match event {
-            WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        physical_key: PhysicalKey::Code(keycode),
-                        state,
-                        ..
-                    },
-                ..
-            } => {
-                let is_pressed = state.is_pressed();
-                match keycode {
-                    KeyCode::KeyW | KeyCode::ArrowUp => {
-                        self.is_forward_pressed = is_pressed;
-                        true
-                    }
-                    KeyCode::KeyS | KeyCode::ArrowDown => {
-                        self.is_backward_pressed = is_pressed;
-                        true
-                    }
-                    KeyCode::KeyD | KeyCode::ArrowRight => {
-                        self.is_right_pressed = is_pressed;
-                        true
-                    }
-                    KeyCode::KeyA | KeyCode::ArrowLeft => {
-                        self.is_left_pressed = is_pressed;
-                        true
-                    }
-                    _ => false,
-                }
-            }
-            _ => false,
-        }
-    }
-
-    fn update_camera(&self, camera: &mut Camera) {
-        let forward_unnorm = camera.target - camera.eye;
-        let forward = forward_unnorm.normalize();
-        let forward_mag = forward_unnorm.magnitude();
-
-        if self.is_forward_pressed && forward_mag > self.speed {
-            camera.eye += forward * self.speed;
-        }
-        if self.is_backward_pressed {
-            camera.eye -= forward * self.speed;
-        }
-
-        let right = forward.cross(camera.up);
-
-        // Recalculate forward to correct for changes after movement
-        let forward_unnorm = camera.target - camera.eye;
-        let forward_mag = forward_unnorm.magnitude();
-        if self.is_right_pressed {
-            // Rescale the distance between the target and the eye so
-            // that it doesn't change. The eye, therefore, still
-            // lies on the circle made by the target and eye.
-            camera.eye =
-                camera.target - (forward_unnorm + right * self.speed).normalize() * forward_mag;
-        }
-
-        if self.is_left_pressed {
-            camera.eye =
-                camera.target - (forward_unnorm - right * self.speed).normalize() * forward_mag;
-        }
+    fn update_view_projection(&mut self, camera: &Camera, projection: &Projection) {
+        self.view_position = camera.position.to_homogeneous().into();
+        self.view_proj = (projection.calc_matrix() * camera.calc_matrix()).into();
     }
 }
 
@@ -241,8 +134,10 @@ struct State<'a> {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
-    camera_controller: CameraController,
     camera: Camera,
+    projection: Projection,
+    camera_controller: CameraController,
+    mouse_pressed: bool,
     camera_uniform: CameraUniform,
     camera_buffer: wgpu::Buffer,
     depth_texture: texture::Texture,
@@ -349,18 +244,12 @@ impl<'a> State<'a> {
                 ],
             });
 
-        let camera = Camera {
-            eye: (0.0, 1.0, 2.0).into(),
-            target: (0.0, 0.0, 0.0).into(),
-            up: cgmath::Vector3::unit_y(),
-            aspect: config.width as f32 / config.height as f32,
-            fovy: 45.0,
-            nearz: 0.1,
-            farz: 100.0,
-        };
+        let camera = Camera::new((0.0, 5.0, 10.0), cgmath::Deg(-90.0), cgmath::Deg(-20.0));
+        let projection =
+            Projection::new(config.width, config.height, cgmath::Deg(45.0), 0.1, 100.0);
 
         let mut camera_uniform = CameraUniform::default();
-        camera_uniform.update_view_projection(&camera);
+        camera_uniform.update_view_projection(&camera, &projection);
 
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Camera Buffer"),
@@ -517,8 +406,10 @@ impl<'a> State<'a> {
             queue,
             config,
             size,
-            camera_controller: CameraController::new(0.2),
             camera,
+            projection,
+            camera_controller: CameraController::new(4.0, 0.4),
+            mouse_pressed: false,
             camera_uniform,
             camera_buffer,
             camera_bind_group,
@@ -541,33 +432,51 @@ impl<'a> State<'a> {
             self.config.width = new_size.width;
             self.config.height = new_size.height;
             self.surface.configure(&self.device, &self.config);
-            self.camera.aspect = self.config.width as f32 / self.config.height as f32;
+            self.projection.resize(new_size.width, new_size.height);
             self.depth_texture =
                 texture::Texture::create_depth_texture(&self.device, &self.config, "depth_texture");
         }
     }
 
     fn input(&mut self, event: &WindowEvent) -> bool {
-        if self.camera_controller.process_event(event) {
-            return true;
-        }
         match event {
             WindowEvent::KeyboardInput {
                 event:
                     KeyEvent {
-                        physical_key: PhysicalKey::Code(KeyCode::Space),
-                        state: ElementState::Pressed,
+                        physical_key: PhysicalKey::Code(key),
+                        state,
                         ..
                     },
                 ..
-            } => false,
+            } => self.camera_controller.process_keyboard(*key, *state),
+            WindowEvent::MouseWheel { delta, .. } => {
+                self.camera_controller.process_scroll(delta);
+                true
+            }
+            WindowEvent::MouseInput {
+                button: MouseButton::Left,
+                state,
+                ..
+            } => {
+                self.mouse_pressed = *state == ElementState::Pressed;
+                true
+            }
             _ => false,
         }
     }
 
-    fn update(&mut self) {
-        self.camera_controller.update_camera(&mut self.camera);
-        self.camera_uniform.update_view_projection(&self.camera);
+    fn get_mouse_pressed(&self) -> bool {
+        self.mouse_pressed
+    }
+
+    fn process_mouse_motion(&mut self, mouse_dx: f64, mouse_dy: f64) {
+        self.camera_controller.process_mouse(mouse_dx, mouse_dy);
+    }
+
+    fn update(&mut self, dt: Duration) {
+        self.camera_controller.update_camera(&mut self.camera, dt);
+        self.camera_uniform
+            .update_view_projection(&self.camera, &self.projection);
         self.queue.write_buffer(
             &self.camera_buffer,
             0,
@@ -589,10 +498,11 @@ impl<'a> State<'a> {
 
         // Update light
         let old_position: cgmath::Vector3<_> = self.light.position.into();
-        self.light.position =
-            (cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_y(), cgmath::Deg(1.0))
-                * old_position)
-                .into();
+        self.light.position = (cgmath::Quaternion::from_axis_angle(
+            cgmath::Vector3::unit_y(),
+            cgmath::Deg(60.0 * dt.as_secs_f32()),
+        ) * old_position)
+            .into();
         self.queue
             .write_buffer(&self.light_buffer, 0, bytemuck::cast_slice(&[self.light]));
     }
@@ -660,6 +570,7 @@ pub async fn run() {
 
     let window_id = window.id();
     let mut state = State::new(window.clone()).await;
+    let mut last_render_time = Instant::now();
 
     let res = event_loop.run(move |event, control_flow| match event {
         Event::WindowEvent {
@@ -680,7 +591,10 @@ pub async fn run() {
                     } => control_flow.exit(),
                     WindowEvent::Resized(physical_size) => state.resize(*physical_size),
                     WindowEvent::RedrawRequested => {
-                        state.update();
+                        let now = Instant::now();
+                        let dt = now - last_render_time;
+                        state.update(dt);
+                        last_render_time = now;
                         match state.render() {
                             Ok(()) => (),
                             Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
@@ -693,6 +607,14 @@ pub async fn run() {
                     }
                     _ => (),
                 }
+            }
+        }
+        Event::DeviceEvent {
+            event: DeviceEvent::MouseMotion { delta },
+            ..
+        } => {
+            if state.get_mouse_pressed() {
+                state.process_mouse_motion(delta.0, delta.1);
             }
         }
         Event::AboutToWait => window.request_redraw(),
