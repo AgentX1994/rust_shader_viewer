@@ -15,6 +15,7 @@ use log::{error, info};
 use wgpu::util::DeviceExt;
 
 mod camera;
+mod hdr;
 mod light;
 mod model;
 mod pipeline;
@@ -150,6 +151,7 @@ struct State<'a> {
     light: LightUniform,
     light_buffer: wgpu::Buffer,
     light_bind_group: wgpu::BindGroup,
+    hdr: hdr::HdrPipeline,
 }
 
 impl<'a> State<'a> {
@@ -176,8 +178,8 @@ impl<'a> State<'a> {
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: None,
-                    required_features: wgpu::Features::default(),
-                    required_limits: wgpu::Limits::default(),
+                    required_features: wgpu::Features::all_webgpu_mask(),
+                    required_limits: wgpu::Limits::downlevel_defaults(),
                 },
                 None,
             )
@@ -363,6 +365,8 @@ impl<'a> State<'a> {
                 push_constant_ranges: &[],
             });
 
+        let hdr = hdr::HdrPipeline::new(&device, &config);
+
         let render_pipeline = {
             let shader = wgpu::ShaderModuleDescriptor {
                 label: Some("Normal Shader"),
@@ -371,9 +375,10 @@ impl<'a> State<'a> {
             RenderPipeline::new(
                 &device,
                 &render_pipeline_layout,
-                config.format,
+                hdr.format(),
                 Some(texture::Texture::DEPTH_FORMAT),
                 &[model::ModelVertex::layout(), Instance::desc()],
+                wgpu::PrimitiveTopology::TriangleList,
                 shader,
             )
         };
@@ -393,9 +398,10 @@ impl<'a> State<'a> {
             RenderPipeline::new(
                 &device,
                 &light_render_pipeline_layout,
-                config.format,
+                hdr.format(),
                 Some(texture::Texture::DEPTH_FORMAT),
                 &[model::ModelVertex::layout()],
+                wgpu::PrimitiveTopology::TriangleList,
                 shader,
             )
         };
@@ -422,6 +428,7 @@ impl<'a> State<'a> {
             light,
             light_buffer,
             light_bind_group,
+            hdr,
         }
     }
 
@@ -435,6 +442,8 @@ impl<'a> State<'a> {
             self.projection.resize(new_size.width, new_size.height);
             self.depth_texture =
                 texture::Texture::create_depth_texture(&self.device, &self.config, "depth_texture");
+            self.hdr
+                .resize(&self.device, new_size.width, new_size.height);
         }
     }
 
@@ -521,7 +530,7 @@ impl<'a> State<'a> {
             let mut render_pass = cmd_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
+                    view: self.hdr.view(),
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::BLUE),
@@ -556,6 +565,7 @@ impl<'a> State<'a> {
                 0..self.instances.len() as u32,
             );
         }
+        self.hdr.process(&mut cmd_encoder, &view);
 
         self.queue.submit(std::iter::once(cmd_encoder.finish()));
         output.present();
