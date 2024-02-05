@@ -120,8 +120,16 @@ pub trait ModelRenderer<'a> {
         material: &'a Material,
         camera_bind_group: &'a wgpu::BindGroup,
         light_bind_group: &'a wgpu::BindGroup,
+        environment_bind_group: &'a wgpu::BindGroup,
     ) {
-        self.draw_mesh_instanced(mesh, material, camera_bind_group, light_bind_group, 0..1);
+        self.draw_mesh_instanced(
+            mesh,
+            material,
+            camera_bind_group,
+            light_bind_group,
+            environment_bind_group,
+            0..1,
+        );
     }
 
     fn draw_mesh_instanced(
@@ -130,6 +138,7 @@ pub trait ModelRenderer<'a> {
         material: &'a Material,
         camera_bind_group: &'a wgpu::BindGroup,
         light_bind_group: &'a wgpu::BindGroup,
+        environment_bind_group: &'a wgpu::BindGroup,
         instances: Range<u32>,
     );
 
@@ -138,8 +147,15 @@ pub trait ModelRenderer<'a> {
         model: &'a Model,
         camera_bind_group: &'a wgpu::BindGroup,
         light_bind_group: &'a wgpu::BindGroup,
+        environment_bind_group: &'a wgpu::BindGroup,
     ) {
-        self.draw_model_instanced(model, camera_bind_group, light_bind_group, 0..1);
+        self.draw_model_instanced(
+            model,
+            camera_bind_group,
+            light_bind_group,
+            environment_bind_group,
+            0..1,
+        );
     }
 
     fn draw_model_instanced(
@@ -147,6 +163,7 @@ pub trait ModelRenderer<'a> {
         model: &'a Model,
         camera_bind_group: &'a wgpu::BindGroup,
         light_bind_group: &'a wgpu::BindGroup,
+        environment_bind_group: &'a wgpu::BindGroup,
         instances: Range<u32>,
     );
 }
@@ -161,6 +178,7 @@ where
         material: &'b Material,
         camera_bind_group: &'b wgpu::BindGroup,
         light_bind_group: &'b wgpu::BindGroup,
+        environment_bind_group: &'b wgpu::BindGroup,
         instances: Range<u32>,
     ) {
         self.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
@@ -168,6 +186,7 @@ where
         self.set_bind_group(0, &material.bind_group, &[]);
         self.set_bind_group(1, camera_bind_group, &[]);
         self.set_bind_group(2, light_bind_group, &[]);
+        self.set_bind_group(3, environment_bind_group, &[]);
         self.draw_indexed(0..mesh.number_of_elements, 0, instances);
     }
 
@@ -176,6 +195,7 @@ where
         model: &'b Model,
         camera_bind_group: &'b wgpu::BindGroup,
         light_bind_group: &'b wgpu::BindGroup,
+        environment_bind_group: &'b wgpu::BindGroup,
         instances: Range<u32>,
     ) {
         for mesh in &model.meshes {
@@ -185,6 +205,7 @@ where
                 material,
                 camera_bind_group,
                 light_bind_group,
+                environment_bind_group,
                 instances.clone(),
             );
         }

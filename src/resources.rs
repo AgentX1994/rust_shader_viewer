@@ -233,7 +233,7 @@ impl HdrLoader {
         }
     }
 
-    pub fn from_equirectangular_bytes(
+    pub fn cube_from_equirectangular_bytes(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -244,13 +244,15 @@ impl HdrLoader {
         let hdr_decoder = HdrDecoder::new(Cursor::new(data))?;
         let meta = hdr_decoder.metadata();
         let mut pixels = vec![[0.0, 0.0, 0.0, 0.0]; meta.width as usize * meta.height as usize];
-        hdr_decoder.read_image_transform(
-            |pix| {
-                let rgb = pix.to_hdr();
-                [rgb.0[0], rgb.0[1], rgb.0[2], 1.0f32]
-            },
-            &mut pixels[..],
-        );
+        hdr_decoder
+            .read_image_transform(
+                |pix| {
+                    let rgb = pix.to_hdr();
+                    [rgb.0[0], rgb.0[1], rgb.0[2], 1.0f32]
+                },
+                &mut pixels[..],
+            )
+            .expect("Could not decode hdr image!");
 
         let src = texture::Texture::create_2d_texture(
             device,
@@ -269,7 +271,7 @@ impl HdrLoader {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            &bytemuck::cast_slice(&pixels),
+            bytemuck::cast_slice(&pixels),
             wgpu::ImageDataLayout {
                 offset: 0,
                 bytes_per_row: Some(src.size.width * std::mem::size_of::<[f32; 4]>() as u32),
@@ -280,8 +282,8 @@ impl HdrLoader {
 
         let dst = texture::CubeTexture::create_2d(
             device,
-            meta.width,
-            meta.height,
+            dst_size,
+            dst_size,
             self.texture_format,
             1,
             wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
