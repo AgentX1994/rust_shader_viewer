@@ -15,6 +15,7 @@ use log::{error, info};
 use wgpu::util::DeviceExt;
 
 mod camera;
+mod cubemap;
 mod hdr;
 mod light;
 mod model;
@@ -30,7 +31,7 @@ use model::{Instance, LightRenderer, ModelRenderer, Vertex};
 use pipeline::RenderPipeline;
 use render_target::{RenderTarget, SurfaceTextureRenderTarget};
 
-use crate::surface::Surface;
+use crate::{cubemap::CubeMapRenderer, surface::Surface};
 
 struct State {
     surface: Surface,
@@ -50,9 +51,7 @@ struct State {
     light_buffer: wgpu::Buffer,
     light_bind_group: wgpu::BindGroup,
     hdr: hdr::HdrPipeline,
-    _sky_texture: texture::CubeTexture,
-    environment_bind_group: wgpu::BindGroup,
-    sky_pipeline: RenderPipeline,
+    cubemap: CubeMapRenderer,
 }
 
 impl State {
@@ -217,79 +216,15 @@ impl State {
         });
 
         let hdr = hdr::HdrPipeline::new(&device, &surface_size, surface.format());
-
-        let sky_texture = {
-            let hdr_loader = resources::HdrLoader::new(&device);
-            let sky_bytes = resources::load_binary("pure-sky.hdr")
-                .await
-                .expect("Unable to load sky texture");
-            hdr_loader
-                .cube_from_equirectangular_bytes(
-                    &device,
-                    &queue,
-                    &sky_bytes,
-                    1080,
-                    Some("Sky Texture"),
-                )
-                .expect("Unable to load sky texture")
-        };
-
-        let environment_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("environment_layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                            view_dimension: wgpu::TextureViewDimension::Cube,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
-                        count: None,
-                    },
-                ],
-            });
-
-        let environment_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("environment_bind_group"),
-            layout: &environment_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(sky_texture.view()),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(sky_texture.sampler()),
-                },
-            ],
-        });
-
-        let sky_pipeline = {
-            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Sky Pipeline Layout"),
-                bind_group_layouts: &[camera.layout(), &environment_layout],
-                push_constant_ranges: &[],
-            });
-
-            let shader = wgpu::include_wgsl!("../sky.wgsl");
-            RenderPipeline::new(
-                &device,
-                &layout,
-                hdr.format(),
-                Some(texture::Texture::DEPTH_FORMAT),
-                &[],
-                wgpu::PrimitiveTopology::TriangleList,
-                shader,
-            )
-        };
+        let cubemap = CubeMapRenderer::new(
+            &device,
+            &queue,
+            camera.layout(),
+            hdr.format(),
+            "pure-sky.hdr",
+            Some("Sky Cubemap"),
+        )
+        .await;
 
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -298,7 +233,7 @@ impl State {
                     &texture_bind_group_layout,
                     camera.layout(),
                     &light_bind_group_layout,
-                    &environment_layout,
+                    cubemap.layout(),
                 ],
                 push_constant_ranges: &[],
             });
@@ -359,9 +294,7 @@ impl State {
             light_buffer,
             light_bind_group,
             hdr,
-            _sky_texture: sky_texture,
-            environment_bind_group,
-            sky_pipeline,
+            cubemap,
         }
     }
 
@@ -474,12 +407,8 @@ impl State {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            {
-                render_pass.set_pipeline(&self.sky_pipeline.pipeline);
-                render_pass.set_bind_group(0, self.camera.bind_group(), &[]);
-                render_pass.set_bind_group(1, &self.environment_bind_group, &[]);
-                render_pass.draw(0..3, 0..1);
-            }
+            self.cubemap
+                .render(&mut render_pass, self.camera.bind_group());
             render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
 
             render_pass.set_pipeline(&self.light_render_pipeline.pipeline);
@@ -494,7 +423,7 @@ impl State {
                 &self.model,
                 self.camera.bind_group(),
                 &self.light_bind_group,
-                &self.environment_bind_group,
+                self.cubemap.bind_group(),
                 0..self.instances.len() as u32,
             );
         }
