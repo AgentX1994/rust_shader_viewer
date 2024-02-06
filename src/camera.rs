@@ -1,4 +1,4 @@
-use cgmath::{perspective, InnerSpace, Matrix4, Point3, Rad, Vector3};
+use cgmath::{perspective, InnerSpace, Matrix4, Point3, Rad, SquareMatrix, Vector3};
 use std::f32::consts::FRAC_PI_2;
 use std::time::Duration;
 use winit::dpi::PhysicalPosition;
@@ -7,8 +7,46 @@ use winit::keyboard::KeyCode;
 
 const SAFE_FRAC_PI_2: f32 = FRAC_PI_2 - 0.0001;
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct CameraUniform {
+    view_position: [f32; 4],
+    view: [[f32; 4]; 4],
+    view_proj: [[f32; 4]; 4],
+    inv_proj: [[f32; 4]; 4],
+    inv_view: [[f32; 4]; 4],
+}
+
+impl Default for CameraUniform {
+    fn default() -> Self {
+        Self {
+            view_position: [0.0; 4],
+            view: cgmath::Matrix4::identity().into(),
+            view_proj: cgmath::Matrix4::identity().into(),
+            inv_proj: cgmath::Matrix4::identity().into(),
+            inv_view: cgmath::Matrix4::identity().into(),
+        }
+    }
+}
+
+impl CameraUniform {
+    pub fn update_view_projection(&mut self, camera: &Camera, projection: &Projection) {
+        self.view_position = camera.position.to_homogeneous().into();
+        let proj = projection.calc_matrix();
+        let view = camera.calc_matrix();
+        let view_proj = proj * view;
+        self.view = view.into();
+        self.view_proj = view_proj.into();
+        self.inv_proj = proj
+            .invert()
+            .expect("projection matrix was singular!")
+            .into();
+        self.inv_view = view.invert().expect("View matrix was singular!").into();
+    }
+}
+
 pub struct Camera {
-    pub position: Point3<f32>,
+    position: Point3<f32>,
     yaw: Rad<f32>,
     pitch: Rad<f32>,
 }

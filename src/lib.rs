@@ -19,136 +19,23 @@ mod hdr;
 mod light;
 mod model;
 mod pipeline;
+mod render_target;
 mod resources;
+mod surface;
 mod texture;
 
-use camera::{Camera, CameraController, Projection};
+use camera::{Camera, CameraController, CameraUniform, Projection};
 use light::LightUniform;
-use model::{LightRenderer, ModelRenderer, Vertex};
+use model::{Instance, LightRenderer, ModelRenderer, Vertex};
 use pipeline::RenderPipeline;
+use render_target::{RenderTarget, SurfaceTextureRenderTarget};
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct InstanceRaw {
-    model: [[f32; 4]; 4],
-    normal: [[f32; 3]; 3],
-}
+use crate::surface::Surface;
 
-#[allow(dead_code)]
-struct Instance {
-    position: cgmath::Vector3<f32>,
-    rotation: cgmath::Quaternion<f32>,
-    rotation_speed: f32,
-    rotation_axis: cgmath::Vector3<f32>,
-}
-
-impl Instance {
-    fn to_raw(&self) -> InstanceRaw {
-        let model = (cgmath::Matrix4::from_translation(self.position)
-            * cgmath::Matrix4::from(self.rotation))
-        .into();
-        let normal = cgmath::Matrix3::from(self.rotation).into();
-        InstanceRaw { model, normal }
-    }
-
-    fn update(&mut self) {
-        // self.rotation = cgmath::Quaternion::from_axis_angle(
-        //     self.rotation_axis,
-        //     cgmath::Rad(self.rotation_speed),
-        // ) * self.rotation;
-    }
-
-    fn desc() -> wgpu::VertexBufferLayout<'static> {
-        use std::mem;
-        wgpu::VertexBufferLayout {
-            array_stride: mem::size_of::<InstanceRaw>() as u64,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &[
-                // model
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x4,
-                    offset: 0,
-                    shader_location: 5,
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x4,
-                    offset: mem::size_of::<[f32; 4]>() as u64,
-                    shader_location: 6,
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x4,
-                    offset: mem::size_of::<[f32; 8]>() as u64,
-                    shader_location: 7,
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x4,
-                    offset: mem::size_of::<[f32; 12]>() as u64,
-                    shader_location: 8,
-                },
-                // normal
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
-                    offset: mem::size_of::<[f32; 16]>() as u64,
-                    shader_location: 9,
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
-                    offset: mem::size_of::<[f32; 19]>() as u64,
-                    shader_location: 10,
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
-                    offset: mem::size_of::<[f32; 22]>() as u64,
-                    shader_location: 11,
-                },
-            ],
-        }
-    }
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct CameraUniform {
-    view_position: [f32; 4],
-    view: [[f32; 4]; 4],
-    view_proj: [[f32; 4]; 4],
-    inv_proj: [[f32; 4]; 4],
-    inv_view: [[f32; 4]; 4],
-}
-
-impl Default for CameraUniform {
-    fn default() -> Self {
-        Self {
-            view_position: [0.0; 4],
-            view: cgmath::Matrix4::identity().into(),
-            view_proj: cgmath::Matrix4::identity().into(),
-            inv_proj: cgmath::Matrix4::identity().into(),
-            inv_view: cgmath::Matrix4::identity().into(),
-        }
-    }
-}
-
-impl CameraUniform {
-    fn update_view_projection(&mut self, camera: &Camera, projection: &Projection) {
-        self.view_position = camera.position.to_homogeneous().into();
-        let proj = projection.calc_matrix();
-        let view = camera.calc_matrix();
-        let view_proj = proj * view;
-        self.view = view.into();
-        self.view_proj = view_proj.into();
-        self.inv_proj = proj
-            .invert()
-            .expect("projection matrix was singular!")
-            .into();
-        self.inv_view = view.invert().expect("View matrix was singular!").into();
-    }
-}
-
-struct State<'a> {
-    surface: wgpu::Surface<'a>,
+struct State {
+    surface: Surface,
     device: wgpu::Device,
     queue: wgpu::Queue,
-    config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
     camera: Camera,
     projection: Projection,
@@ -172,7 +59,7 @@ struct State<'a> {
     sky_pipeline: RenderPipeline,
 }
 
-impl<'a> State<'a> {
+impl State {
     async fn new(window: Arc<Window>) -> Self {
         let size = window.inner_size();
 
@@ -204,24 +91,11 @@ impl<'a> State<'a> {
             .await
             .unwrap();
 
-        let surface_caps = surface.get_capabilities(&adapter);
-
-        let surface_format = surface_caps
-            .formats
-            .iter()
-            .copied()
-            .find(|f| f.is_srgb())
-            .unwrap_or(surface_caps.formats[0]);
-        let config = wgpu::SurfaceConfiguration {
-            format: surface_format,
-            ..surface
-                .get_default_config(&adapter, size.width, size.height)
-                .unwrap()
-        };
-        surface.configure(&device, &config);
+        let surface = Surface::new((size.width, size.height), surface, &adapter, &device);
+        let surface_size = surface.extent();
 
         let depth_texture =
-            texture::Texture::create_depth_texture(&device, &config, "depth_texture");
+            texture::Texture::create_depth_texture(&device, &surface_size, "depth_texture");
 
         let texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -265,8 +139,13 @@ impl<'a> State<'a> {
             });
 
         let camera = Camera::new((0.0, 5.0, 10.0), cgmath::Deg(-90.0), cgmath::Deg(-20.0));
-        let projection =
-            Projection::new(config.width, config.height, cgmath::Deg(45.0), 0.1, 100.0);
+        let projection = Projection::new(
+            surface_size.width,
+            surface_size.height,
+            cgmath::Deg(45.0),
+            0.1,
+            100.0,
+        );
 
         let mut camera_uniform = CameraUniform::default();
         camera_uniform.update_view_projection(&camera, &projection);
@@ -372,7 +251,7 @@ impl<'a> State<'a> {
             }],
         });
 
-        let hdr = hdr::HdrPipeline::new(&device, &config);
+        let hdr = hdr::HdrPipeline::new(&device, &surface_size, surface.format());
 
         let sky_texture = {
             let hdr_loader = resources::HdrLoader::new(&device);
@@ -501,7 +380,6 @@ impl<'a> State<'a> {
             surface,
             device,
             queue,
-            config,
             size,
             camera,
             projection,
@@ -530,12 +408,14 @@ impl<'a> State<'a> {
         if new_size.width > 0 && new_size.height > 0 {
             info!("Resizing to {}x{}", new_size.width, new_size.height);
             self.size = new_size;
-            self.config.width = new_size.width;
-            self.config.height = new_size.height;
-            self.surface.configure(&self.device, &self.config);
+            self.surface
+                .resize(&self.device, new_size.width, new_size.height);
             self.projection.resize(new_size.width, new_size.height);
-            self.depth_texture =
-                texture::Texture::create_depth_texture(&self.device, &self.config, "depth_texture");
+            self.depth_texture = texture::Texture::create_depth_texture(
+                &self.device,
+                &self.surface.extent(),
+                "depth_texture",
+            );
             self.hdr
                 .resize(&self.device, new_size.width, new_size.height);
         }
@@ -568,12 +448,10 @@ impl<'a> State<'a> {
         }
     }
 
-    fn get_mouse_pressed(&self) -> bool {
-        self.mouse_pressed
-    }
-
     fn process_mouse_motion(&mut self, mouse_dx: f64, mouse_dy: f64) {
-        self.camera_controller.process_mouse(mouse_dx, mouse_dy);
+        if self.mouse_pressed {
+            self.camera_controller.process_mouse(mouse_dx, mouse_dy);
+        }
     }
 
     fn update(&mut self, dt: Duration) {
@@ -611,10 +489,7 @@ impl<'a> State<'a> {
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        let output = self.surface.get_current_texture()?;
-        let view = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        let output = SurfaceTextureRenderTarget::new(&self.surface)?;
         let mut cmd_encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -666,7 +541,7 @@ impl<'a> State<'a> {
                 0..self.instances.len() as u32,
             );
         }
-        self.hdr.process(&mut cmd_encoder, &view);
+        self.hdr.process(&mut cmd_encoder, output.view());
 
         self.queue.submit(std::iter::once(cmd_encoder.finish()));
         output.present();
@@ -724,9 +599,7 @@ pub async fn run() {
             event: DeviceEvent::MouseMotion { delta },
             ..
         } => {
-            if state.get_mouse_pressed() {
-                state.process_mouse_motion(delta.0, delta.1);
-            }
+            state.process_mouse_motion(delta.0, delta.1);
         }
         Event::AboutToWait => window.request_redraw(),
         _ => (),

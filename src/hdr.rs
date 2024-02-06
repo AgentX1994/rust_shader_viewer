@@ -14,9 +14,13 @@ pub struct HdrPipeline {
 }
 
 impl HdrPipeline {
-    pub fn new(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) -> Self {
-        let width = config.width;
-        let height = config.height;
+    pub fn new(
+        device: &wgpu::Device,
+        extent: &wgpu::Extent3d,
+        surface_format: wgpu::TextureFormat,
+    ) -> Self {
+        let width = extent.width;
+        let height = extent.height;
 
         // We could use `Rgba32Float`, but that requires some extra
         // features to be enabled for rendering.
@@ -79,7 +83,7 @@ impl HdrPipeline {
         let pipeline = RenderPipeline::new(
             device,
             &pipeline_layout,
-            config.format,
+            format,
             None,
             &[],
             wgpu::PrimitiveTopology::TriangleList,
