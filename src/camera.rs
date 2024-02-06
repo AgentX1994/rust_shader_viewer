@@ -1,6 +1,7 @@
 use cgmath::{perspective, InnerSpace, Matrix4, Point3, Rad, SquareMatrix, Vector3};
 use std::f32::consts::FRAC_PI_2;
 use std::time::Duration;
+use wgpu::util::DeviceExt;
 use winit::dpi::PhysicalPosition;
 use winit::event::*;
 use winit::keyboard::KeyCode;
@@ -99,6 +100,83 @@ impl Projection {
 
     pub fn calc_matrix(&self) -> cgmath::Matrix4<f32> {
         perspective(self.fovy, self.aspect, self.znear, self.zfar)
+    }
+}
+
+pub struct PerspectiveCamera {
+    camera: Camera,
+    projection: Projection,
+    uniform: CameraUniform,
+    buffer: wgpu::Buffer,
+    layout: wgpu::BindGroupLayout,
+    bind_group: wgpu::BindGroup,
+}
+
+impl PerspectiveCamera {
+    pub fn new(device: &wgpu::Device, camera: Camera, projection: Projection) -> Self {
+        let mut uniform = CameraUniform::default();
+        uniform.update_view_projection(&camera, &projection);
+
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Camera Buffer"),
+            contents: bytemuck::cast_slice(&[uniform]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Camera Bind Group Layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Camera Bind Group"),
+            layout: &layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            }],
+        });
+
+        Self {
+            camera,
+            projection,
+            uniform,
+            buffer,
+            layout,
+            bind_group,
+        }
+    }
+
+    pub fn resize(&mut self, width: u32, height: u32) {
+        self.projection.resize(width, height);
+    }
+
+    pub fn update(&mut self, controller: &mut CameraController, dt: Duration, queue: &wgpu::Queue) {
+        controller.update_camera(&mut self.camera, dt);
+        self.uniform
+            .update_view_projection(&self.camera, &self.projection);
+        queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&[self.uniform]));
+    }
+
+    pub fn camera(&self) -> &Camera {
+        &self.camera
+    }
+
+    pub fn bind_group(&self) -> &wgpu::BindGroup {
+        &self.bind_group
+    }
+
+    pub fn layout(&self) -> &wgpu::BindGroupLayout {
+        &self.layout
     }
 }
 

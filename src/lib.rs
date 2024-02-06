@@ -24,7 +24,7 @@ mod resources;
 mod surface;
 mod texture;
 
-use camera::{Camera, CameraController, CameraUniform, Projection};
+use camera::{Camera, CameraController, PerspectiveCamera, Projection};
 use light::LightUniform;
 use model::{Instance, LightRenderer, ModelRenderer, Vertex};
 use pipeline::RenderPipeline;
@@ -37,14 +37,10 @@ struct State {
     device: wgpu::Device,
     queue: wgpu::Queue,
     size: winit::dpi::PhysicalSize<u32>,
-    camera: Camera,
-    projection: Projection,
+    camera: PerspectiveCamera,
     camera_controller: CameraController,
     mouse_pressed: bool,
-    camera_uniform: CameraUniform,
-    camera_buffer: wgpu::Buffer,
     depth_texture: texture::Texture,
-    camera_bind_group: wgpu::BindGroup,
     render_pipeline: RenderPipeline,
     light_render_pipeline: RenderPipeline,
     model: model::Model,
@@ -147,38 +143,7 @@ impl State {
             100.0,
         );
 
-        let mut camera_uniform = CameraUniform::default();
-        camera_uniform.update_view_projection(&camera, &projection);
-
-        let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Camera Buffer"),
-            contents: bytemuck::cast_slice(&[camera_uniform]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let camera_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Camera Bind Group Layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
-
-        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Camera Bind Group"),
-            layout: &camera_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: camera_buffer.as_entire_binding(),
-            }],
-        });
+        let camera = PerspectiveCamera::new(&device, camera, projection);
 
         // Create instances
         const NUM_INSTANCE_PER_ROW: usize = 10;
@@ -310,7 +275,7 @@ impl State {
         let sky_pipeline = {
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Sky Pipeline Layout"),
-                bind_group_layouts: &[&camera_bind_group_layout, &environment_layout],
+                bind_group_layouts: &[camera.layout(), &environment_layout],
                 push_constant_ranges: &[],
             });
 
@@ -331,7 +296,7 @@ impl State {
                 label: Some("Pipeline layout"),
                 bind_group_layouts: &[
                     &texture_bind_group_layout,
-                    &camera_bind_group_layout,
+                    camera.layout(),
                     &light_bind_group_layout,
                     &environment_layout,
                 ],
@@ -357,7 +322,7 @@ impl State {
         let light_render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Pipeline layout"),
-                bind_group_layouts: &[&camera_bind_group_layout, &light_bind_group_layout],
+                bind_group_layouts: &[camera.layout(), &light_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
@@ -382,12 +347,8 @@ impl State {
             queue,
             size,
             camera,
-            projection,
             camera_controller: CameraController::new(4.0, 1.0),
             mouse_pressed: false,
-            camera_uniform,
-            camera_buffer,
-            camera_bind_group,
             depth_texture,
             render_pipeline,
             light_render_pipeline,
@@ -410,7 +371,7 @@ impl State {
             self.size = new_size;
             self.surface
                 .resize(&self.device, new_size.width, new_size.height);
-            self.projection.resize(new_size.width, new_size.height);
+            self.camera.resize(new_size.width, new_size.height);
             self.depth_texture = texture::Texture::create_depth_texture(
                 &self.device,
                 &self.surface.extent(),
@@ -455,14 +416,10 @@ impl State {
     }
 
     fn update(&mut self, dt: Duration) {
-        self.camera_controller.update_camera(&mut self.camera, dt);
-        self.camera_uniform
-            .update_view_projection(&self.camera, &self.projection);
-        self.queue.write_buffer(
-            &self.camera_buffer,
-            0,
-            bytemuck::cast_slice(&[self.camera_uniform]),
-        );
+        // TODO This is a clumsy way to update the camera
+        self.camera
+            .update(&mut self.camera_controller, dt, &self.queue);
+
         for ele in &mut self.instances {
             ele.update();
         }
@@ -519,7 +476,7 @@ impl State {
             });
             {
                 render_pass.set_pipeline(&self.sky_pipeline.pipeline);
-                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                render_pass.set_bind_group(0, self.camera.bind_group(), &[]);
                 render_pass.set_bind_group(1, &self.environment_bind_group, &[]);
                 render_pass.draw(0..3, 0..1);
             }
@@ -528,14 +485,14 @@ impl State {
             render_pass.set_pipeline(&self.light_render_pipeline.pipeline);
             render_pass.draw_light_model(
                 &self.model,
-                &self.camera_bind_group,
+                self.camera.bind_group(),
                 &self.light_bind_group,
             );
 
             render_pass.set_pipeline(&self.render_pipeline.pipeline);
             render_pass.draw_model_instanced(
                 &self.model,
-                &self.camera_bind_group,
+                self.camera.bind_group(),
                 &self.light_bind_group,
                 &self.environment_bind_group,
                 0..self.instances.len() as u32,
