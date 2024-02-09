@@ -1,5 +1,7 @@
 use std::ops::Range;
 
+use wgpu::{vertex_attr_array, VertexAttribute};
+
 use crate::texture;
 
 pub trait Vertex {
@@ -19,36 +21,18 @@ pub struct ModelVertex {
 impl Vertex for ModelVertex {
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         use std::mem;
+        const ATTRIBUTES: [VertexAttribute; 5] = vertex_attr_array![
+            // model
+            0 => Float32x3,
+            1 => Float32x2,
+            2 => Float32x3,
+            3 => Float32x3,
+            4 => Float32x3
+        ];
         wgpu::VertexBufferLayout {
             array_stride: mem::size_of::<ModelVertex>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
-                    offset: 0,
-                    shader_location: 0,
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x2,
-                    offset: mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
-                    shader_location: 1,
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
-                    offset: mem::size_of::<[f32; 5]>() as wgpu::BufferAddress,
-                    shader_location: 2,
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
-                    offset: mem::size_of::<[f32; 8]>() as wgpu::BufferAddress,
-                    shader_location: 3,
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
-                    offset: mem::size_of::<[f32; 11]>() as wgpu::BufferAddress,
-                    shader_location: 4,
-                },
-            ],
+            attributes: &ATTRIBUTES,
         }
     }
 }
@@ -146,48 +130,20 @@ impl Instance {
 
     pub fn desc() -> wgpu::VertexBufferLayout<'static> {
         use std::mem;
+        const ATTRIBUTES: [VertexAttribute; 7] = vertex_attr_array![
+            // model
+            5 => Float32x4,
+            6 => Float32x4,
+            7 => Float32x4,
+            8 => Float32x4,
+            9 => Float32x4,
+            10 => Float32x4,
+            11 => Float32x4,
+        ];
         wgpu::VertexBufferLayout {
             array_stride: mem::size_of::<InstanceRaw>() as u64,
             step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &[
-                // model
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x4,
-                    offset: 0,
-                    shader_location: 5,
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x4,
-                    offset: mem::size_of::<[f32; 4]>() as u64,
-                    shader_location: 6,
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x4,
-                    offset: mem::size_of::<[f32; 8]>() as u64,
-                    shader_location: 7,
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x4,
-                    offset: mem::size_of::<[f32; 12]>() as u64,
-                    shader_location: 8,
-                },
-                // normal
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
-                    offset: mem::size_of::<[f32; 16]>() as u64,
-                    shader_location: 9,
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
-                    offset: mem::size_of::<[f32; 19]>() as u64,
-                    shader_location: 10,
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
-                    offset: mem::size_of::<[f32; 22]>() as u64,
-                    shader_location: 11,
-                },
-            ],
+            attributes: &ATTRIBUTES,
         }
     }
 }
