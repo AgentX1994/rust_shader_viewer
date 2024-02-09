@@ -22,6 +22,7 @@ mod model;
 mod pipeline;
 mod render_target;
 mod resources;
+mod shader;
 mod surface;
 mod texture;
 
@@ -31,7 +32,7 @@ use model::{Instance, LightRenderer, ModelRenderer, Vertex};
 use pipeline::RenderPipeline;
 use render_target::{RenderTarget, SurfaceTextureRenderTarget};
 
-use crate::{cubemap::CubeMapRenderer, surface::Surface};
+use crate::{cubemap::CubeMapRenderer, shader::Shader, surface::Surface};
 
 struct State {
     surface: Surface,
@@ -43,6 +44,8 @@ struct State {
     mouse_pressed: bool,
     depth_texture: texture::Texture,
     render_pipeline: RenderPipeline,
+    alt_render_pipeline: Option<RenderPipeline>,
+    current_pipeline: u32,
     light_render_pipeline: RenderPipeline,
     model: model::Model,
     instances: Vec<Instance>,
@@ -55,7 +58,7 @@ struct State {
 }
 
 impl State {
-    async fn new(window: Arc<Window>) -> Self {
+    async fn new(window: Arc<Window>, extra_shader: Option<String>) -> Self {
         let size = window.inner_size();
 
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -239,10 +242,13 @@ impl State {
             });
 
         let render_pipeline = {
-            let shader = wgpu::ShaderModuleDescriptor {
-                label: Some("Normal Shader"),
-                source: wgpu::ShaderSource::Wgsl(include_str!("../shader.wgsl").into()),
-            };
+            let shader = Shader::new_wgsl(
+                &device,
+                "normal",
+                "vs_main",
+                "fs_main",
+                include_str!("../shader.wgsl"),
+            );
             RenderPipeline::new(
                 &device,
                 &render_pipeline_layout,
@@ -250,7 +256,7 @@ impl State {
                 Some(texture::Texture::DEPTH_FORMAT),
                 &[model::ModelVertex::layout(), Instance::desc()],
                 wgpu::PrimitiveTopology::TriangleList,
-                shader,
+                &shader,
             )
         };
 
@@ -262,10 +268,13 @@ impl State {
             });
 
         let light_render_pipeline = {
-            let shader = wgpu::ShaderModuleDescriptor {
-                label: Some("Light Shader"),
-                source: wgpu::ShaderSource::Wgsl(include_str!("../light_shader.wgsl").into()),
-            };
+            let shader = Shader::new_wgsl(
+                &device,
+                "Light",
+                "vs_main",
+                "fs_main",
+                include_str!("../light_shader.wgsl"),
+            );
             RenderPipeline::new(
                 &device,
                 &light_render_pipeline_layout,
@@ -273,9 +282,24 @@ impl State {
                 Some(texture::Texture::DEPTH_FORMAT),
                 &[model::ModelVertex::layout()],
                 wgpu::PrimitiveTopology::TriangleList,
-                shader,
+                &shader,
             )
         };
+        let alt_render_pipeline = extra_shader.map(|shader_file_path| {
+            let source =
+                std::fs::read_to_string(shader_file_path).expect("Could not read extra shader!");
+            // TODO: get entry points from shader source?
+            let shader = Shader::new_wgsl(&device, "alt shader", "vs_main", "fs_main", &source);
+            RenderPipeline::new(
+                &device,
+                &render_pipeline_layout,
+                hdr.format(),
+                Some(texture::Texture::DEPTH_FORMAT),
+                &[model::ModelVertex::layout(), Instance::desc()],
+                wgpu::PrimitiveTopology::TriangleList,
+                &shader,
+            )
+        });
         Self {
             surface,
             device,
@@ -286,6 +310,8 @@ impl State {
             mouse_pressed: false,
             depth_texture,
             render_pipeline,
+            alt_render_pipeline,
+            current_pipeline: 0,
             light_render_pipeline,
             model,
             instances,
@@ -325,7 +351,19 @@ impl State {
                         ..
                     },
                 ..
-            } => self.camera_controller.process_keyboard(*key, *state),
+            } => {
+                if !self.camera_controller.process_keyboard(*key, *state) {
+                    if *state == ElementState::Pressed && *key == KeyCode::KeyP {
+                        // Switch pipelines
+                        self.current_pipeline ^= 1;
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    true
+                }
+            }
             WindowEvent::MouseWheel { delta, .. } => {
                 self.camera_controller.process_scroll(delta);
                 true
@@ -418,7 +456,14 @@ impl State {
                 &self.light_bind_group,
             );
 
-            render_pass.set_pipeline(&self.render_pipeline.pipeline);
+            if self.current_pipeline == 0 {
+                render_pass.set_pipeline(&self.render_pipeline.pipeline);
+            } else {
+                match &self.alt_render_pipeline {
+                    Some(pipeline) => render_pass.set_pipeline(&pipeline.pipeline),
+                    None => render_pass.set_pipeline(&self.render_pipeline.pipeline),
+                }
+            }
             render_pass.draw_model_instanced(
                 &self.model,
                 self.camera.bind_group(),
@@ -437,11 +482,12 @@ impl State {
 }
 
 pub async fn run() {
+    let extra_shader = std::env::args().nth(1);
     let event_loop = EventLoop::new().unwrap();
     let window = Arc::new(WindowBuilder::new().build(&event_loop).unwrap());
 
     let window_id = window.id();
-    let mut state = State::new(window.clone()).await;
+    let mut state = State::new(window.clone(), extra_shader).await;
     let mut last_render_time = Instant::now();
 
     let res = event_loop.run(move |event, control_flow| match event {

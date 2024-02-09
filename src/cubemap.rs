@@ -1,5 +1,6 @@
 use crate::pipeline::RenderPipeline;
 use crate::resources;
+use crate::shader::Shader;
 use crate::texture::{CubeTexture, Texture};
 
 pub struct CubeMapRenderer {
@@ -73,7 +74,13 @@ impl CubeMapRenderer {
                 push_constant_ranges: &[],
             });
 
-            let shader = wgpu::include_wgsl!("../sky.wgsl");
+            let shader = Shader::new_wgsl(
+                device,
+                "cubemap",
+                "vs_main",
+                "fs_main",
+                include_str!("../sky.wgsl"),
+            );
             RenderPipeline::new(
                 device,
                 &layout,
@@ -81,7 +88,7 @@ impl CubeMapRenderer {
                 Some(Texture::DEPTH_FORMAT),
                 &[],
                 wgpu::PrimitiveTopology::TriangleList,
-                shader,
+                &shader,
             )
         };
 

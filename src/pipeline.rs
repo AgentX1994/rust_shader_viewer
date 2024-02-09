@@ -1,3 +1,5 @@
+use crate::shader::Shader;
+
 pub struct RenderPipeline {
     pub pipeline: wgpu::RenderPipeline,
 }
@@ -10,20 +12,19 @@ impl RenderPipeline {
         depth_format: Option<wgpu::TextureFormat>,
         vertex_layouts: &[wgpu::VertexBufferLayout],
         topology: wgpu::PrimitiveTopology,
-        shader: wgpu::ShaderModuleDescriptor,
+        shader: &Shader,
     ) -> Self {
-        let shader = device.create_shader_module(shader);
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Render Pipeline"),
             layout: Some(layout),
             vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: "vs_main",
+                module: shader.get_vertex_module(),
+                entry_point: shader.get_vertex_entry_point(),
                 buffers: vertex_layouts,
             },
             fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: "fs_main",
+                module: shader.get_fragment_module(),
+                entry_point: shader.get_fragment_entry_point(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: color_format,
                     blend: Some(wgpu::BlendState::REPLACE),
