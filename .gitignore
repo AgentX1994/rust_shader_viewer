@@ -1,1 +1,10 @@
 /target
+
+# Ignore profiling data
+perf.data
+flamegraph.svg 
+
+# Ignore resources for now
+/res 
+# Ignore WGSL files only in root
+/*.wgsl 

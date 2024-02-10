@@ -185,7 +185,10 @@ pub struct HdrLoader {
 
 impl HdrLoader {
     pub fn new(device: &wgpu::Device) -> Self {
-        let module = device.create_shader_module(wgpu::include_wgsl!("../equirectangular.wgsl"));
+        let module = device.create_shader_module(wgpu::include_wgsl!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/shaders/equirectangular.wgsl"
+        )));
         let texture_format = wgpu::TextureFormat::Rgba32Float;
         let equirect_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("HdrLoader::equirect_layout"),

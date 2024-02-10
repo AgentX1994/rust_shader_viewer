@@ -78,7 +78,7 @@ impl HdrPipeline {
             "hdr",
             "vs_main",
             "fs_main",
-            include_str!("../hdr.wgsl"),
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/hdr.wgsl")),
         );
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,

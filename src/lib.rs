@@ -1,4 +1,5 @@
 use std::{
+    path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -12,7 +13,7 @@ use winit::{
 };
 
 use cgmath::prelude::*;
-use log::{debug, error, info};
+use log::{error, info};
 use wgpu::util::DeviceExt;
 
 mod camera;
@@ -36,7 +37,7 @@ use pipeline::RenderPipeline;
 use render_target::{RenderTarget, SurfaceTextureRenderTarget};
 use shader::Shader;
 use surface::Surface;
-use ui::{EguiDrawParams, EguiRenderer};
+use ui::{highlight, CodeTheme, EguiDrawParams, EguiRenderer};
 
 struct State {
     surface: Surface,
@@ -47,9 +48,9 @@ struct State {
     camera_controller: CameraController,
     mouse_pressed: bool,
     depth_texture: texture::Texture,
+    shader_source: String,
+    render_pipeline_layout: wgpu::PipelineLayout,
     render_pipeline: RenderPipeline,
-    alt_render_pipeline: Option<RenderPipeline>,
-    current_pipeline: u32,
     light_render_pipeline: RenderPipeline,
     model: model::Model,
     instances: Vec<Instance>,
@@ -63,7 +64,7 @@ struct State {
 }
 
 impl State {
-    async fn new(window: Arc<Window>, extra_shader: Option<String>) -> Self {
+    async fn new<P: AsRef<Path>>(window: Arc<Window>, starting_shader: Option<P>) -> Self {
         let size = window.inner_size();
 
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -87,7 +88,7 @@ impl State {
                 &wgpu::DeviceDescriptor {
                     label: None,
                     required_features: wgpu::Features::all_webgpu_mask(),
-                    required_limits: wgpu::Limits::downlevel_defaults(),
+                    required_limits: wgpu::Limits::default(),
                 },
                 None,
             )
@@ -95,7 +96,7 @@ impl State {
             .unwrap();
 
         let surface = Surface::new((size.width, size.height), surface, &adapter, &device);
-        debug!(
+        info!(
             "Surface created, surface: {:?}, capabilities: {:?}",
             surface.surface(),
             surface.capabilities()
@@ -251,14 +252,25 @@ impl State {
                 push_constant_ranges: &[],
             });
 
-        let render_pipeline = {
-            let shader = Shader::new_wgsl(
-                &device,
-                "normal",
-                "vs_main",
-                "fs_main",
-                include_str!("../shader.wgsl"),
+        let shader_source = starting_shader
+            .and_then(|p| match std::fs::read_to_string(p.as_ref()) {
+                Ok(s) => Some(s),
+                Err(e) => {
+                    error!(
+                        "Unable to load supplied shader {} ({}), using default!",
+                        p.as_ref().display(),
+                        e
+                    );
+                    None
+                }
+            })
+            .unwrap_or(
+                include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/shader.wgsl"))
+                    .to_string(),
             );
+
+        let render_pipeline = {
+            let shader = Shader::new_wgsl(&device, "normal", "vs_main", "fs_main", &shader_source);
             RenderPipeline::new(
                 &device,
                 &render_pipeline_layout,
@@ -283,7 +295,10 @@ impl State {
                 "Light",
                 "vs_main",
                 "fs_main",
-                include_str!("../light_shader.wgsl"),
+                include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/shaders/light_shader.wgsl"
+                )),
             );
             RenderPipeline::new(
                 &device,
@@ -295,21 +310,6 @@ impl State {
                 &shader,
             )
         };
-        let alt_render_pipeline = extra_shader.map(|shader_file_path| {
-            let source =
-                std::fs::read_to_string(shader_file_path).expect("Could not read extra shader!");
-            // TODO: get entry points from shader source?
-            let shader = Shader::new_wgsl(&device, "alt shader", "vs_main", "fs_main", &source);
-            RenderPipeline::new(
-                &device,
-                &render_pipeline_layout,
-                hdr.format(),
-                Some(texture::Texture::DEPTH_FORMAT),
-                &[model::ModelVertex::layout(), Instance::desc()],
-                wgpu::PrimitiveTopology::TriangleList,
-                &shader,
-            )
-        });
         let ui = EguiRenderer::new(&device, hdr.format(), None, 1, &window);
         Self {
             surface,
@@ -320,9 +320,9 @@ impl State {
             camera_controller: CameraController::new(4.0, 1.0),
             mouse_pressed: false,
             depth_texture,
+            render_pipeline_layout,
             render_pipeline,
-            alt_render_pipeline,
-            current_pipeline: 0,
+            shader_source,
             light_render_pipeline,
             model,
             instances,
@@ -366,19 +366,7 @@ impl State {
                         ..
                     },
                 ..
-            } => {
-                if !self.camera_controller.process_keyboard(*key, *state) {
-                    if *state == ElementState::Pressed && *key == KeyCode::KeyP {
-                        // Switch pipelines
-                        self.current_pipeline ^= 1;
-                        true
-                    } else {
-                        false
-                    }
-                } else {
-                    true
-                }
-            }
+            } => self.camera_controller.process_keyboard(*key, *state),
             WindowEvent::MouseWheel { delta, .. } => {
                 self.camera_controller.process_scroll(delta);
                 true
@@ -399,6 +387,36 @@ impl State {
         if self.mouse_pressed {
             self.camera_controller.process_mouse(mouse_dx, mouse_dy);
         }
+    }
+
+    fn compile_shader(&mut self) {
+        info!("Compiling shader");
+        self.render_pipeline = {
+            // TODO: get entry points from shader source?
+            let shader = Shader::new_wgsl(
+                &self.device,
+                "shader",
+                "vs_main",
+                "fs_main",
+                &self.shader_source,
+            );
+            RenderPipeline::new(
+                &self.device,
+                &self.render_pipeline_layout,
+                self.hdr.format(),
+                Some(texture::Texture::DEPTH_FORMAT),
+                &[model::ModelVertex::layout(), Instance::desc()],
+                wgpu::PrimitiveTopology::TriangleList,
+                &shader,
+            )
+        };
+    }
+
+    fn load_shader<P: AsRef<Path>>(&mut self, shader_file_path: P) -> anyhow::Result<()> {
+        let source = std::fs::read_to_string(shader_file_path)?;
+        self.shader_source = source;
+        self.compile_shader();
+        Ok(())
     }
 
     fn update(&mut self, dt: Duration) {
@@ -471,14 +489,7 @@ impl State {
                 &self.light_bind_group,
             );
 
-            if self.current_pipeline == 0 {
-                render_pass.set_pipeline(&self.render_pipeline.pipeline);
-            } else {
-                match &self.alt_render_pipeline {
-                    Some(pipeline) => render_pass.set_pipeline(&pipeline.pipeline),
-                    None => render_pass.set_pipeline(&self.render_pipeline.pipeline),
-                }
-            }
+            render_pass.set_pipeline(&self.render_pipeline.pipeline);
             render_pass.draw_model_instanced(
                 &self.model,
                 self.camera.bind_group(),
@@ -492,6 +503,9 @@ impl State {
             size_in_pixels: [size.width, size.height],
             pixels_per_point: window.scale_factor() as f32,
         };
+        let mut picked_path: Option<PathBuf> = None;
+        let mut source = std::mem::take(&mut self.shader_source);
+        let mut shader_changed = false;
         let draw_params = EguiDrawParams {
             device: &self.device,
             queue: &self.queue,
@@ -500,15 +514,67 @@ impl State {
             view: self.hdr.view(),
             screen_descriptor,
             run_ui: |ui| {
-                egui::Window::new("Test")
+                egui::Window::new("Shader Editor")
                     .resizable(true)
                     .vscroll(true)
                     .default_open(true)
                     .show(ui, |ui| {
-                        ui.label("Window!");
-                        ui.label("Window!");
-                        ui.label("Window!");
-                        ui.label("Window!");
+                        if ui.button("Load a new shader").clicked() {
+                            if let Some(path) = rfd::FileDialog::new().pick_file() {
+                                picked_path = Some(path);
+                            }
+                        }
+
+                        ui.heading("Shader Source");
+                        let mut theme = CodeTheme::from_memory(ui.ctx());
+                        ui.collapsing("Theme Settings", |ui| {
+                            ui.group(|ui| {
+                                theme.ui(ui);
+                                theme.clone().store_in_memory(ui.ctx());
+                            })
+                        });
+                        let mut layouter = |ui: &egui::Ui, string: &str, wrap_width: f32| {
+                            let mut layout_job = highlight(ui.ctx(), &theme, string, "wgsl");
+                            layout_job.wrap.max_width = wrap_width;
+                            ui.fonts(|f| f.layout_job(layout_job))
+                        };
+                        let response = ui.add(
+                            egui::TextEdit::multiline(&mut source)
+                                .font(egui::TextStyle::Monospace)
+                                .code_editor()
+                                .lock_focus(true)
+                                .desired_width(f32::INFINITY)
+                                .layouter(&mut layouter),
+                        );
+                        response.context_menu(|ui| {
+                            if ui.button("Recompile").clicked() {
+                                shader_changed = true;
+                            }
+                            if ui.button("Save").clicked() {
+                                if let Some(path) = rfd::FileDialog::new().save_file() {
+                                    match std::fs::write(path, &source) {
+                                        Ok(_) => (),
+                                        Err(e) => error!("Could not save file! {}", e),
+                                    }
+                                }
+                            }
+                        });
+                        if !shader_changed {
+                            shader_changed = response.lost_focus();
+                        }
+                        ui.horizontal(|ui| {
+                            if ui.button("Recompile shader").clicked() {
+                                shader_changed = true;
+                            }
+                            if ui.button("Save shader").clicked() {
+                                if let Some(path) = rfd::FileDialog::new().save_file() {
+                                    match std::fs::write(path, &source) {
+                                        Ok(_) => (),
+                                        Err(e) => error!("Could not save file! {}", e),
+                                    }
+                                }
+                            }
+                        });
                     });
             },
         };
@@ -518,17 +584,28 @@ impl State {
         self.queue.submit(std::iter::once(cmd_encoder.finish()));
         output.present();
 
+        // TODO this feels like it should be somewhere else
+        self.shader_source = source;
+        if let Some(path_to_load) = &picked_path {
+            if let Err(e) = self.load_shader(path_to_load) {
+                error!("Unable to load shader {}: {}", path_to_load.display(), e);
+            }
+        }
+        if shader_changed {
+            info!("Shader changed!");
+            self.compile_shader();
+        }
+
         Ok(())
     }
 }
 
 pub async fn run() {
-    let extra_shader = std::env::args().nth(1);
     let event_loop = EventLoop::new().unwrap();
     let window = Arc::new(WindowBuilder::new().build(&event_loop).unwrap());
 
     let window_id = window.id();
-    let mut state = State::new(window.clone(), extra_shader).await;
+    let mut state = State::new(window.clone(), std::env::args().nth(1)).await;
     let mut last_render_time = Instant::now();
 
     let res = event_loop.run(move |event, control_flow| match event {

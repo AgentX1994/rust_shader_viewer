@@ -79,7 +79,7 @@ impl CubeMapRenderer {
                 "cubemap",
                 "vs_main",
                 "fs_main",
-                include_str!("../sky.wgsl"),
+                include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/sky.wgsl")),
             );
             RenderPipeline::new(
                 device,
