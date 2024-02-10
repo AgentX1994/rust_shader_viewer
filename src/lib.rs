@@ -3,6 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use egui_wgpu::ScreenDescriptor;
 use winit::{
     event::*,
     event_loop::EventLoop,
@@ -25,14 +26,17 @@ mod resources;
 mod shader;
 mod surface;
 mod texture;
+mod ui;
 
 use camera::{Camera, CameraController, PerspectiveCamera, Projection};
+use cubemap::CubeMapRenderer;
 use light::LightUniform;
 use model::{Instance, LightRenderer, ModelRenderer, Vertex};
 use pipeline::RenderPipeline;
 use render_target::{RenderTarget, SurfaceTextureRenderTarget};
-
-use crate::{cubemap::CubeMapRenderer, shader::Shader, surface::Surface};
+use shader::Shader;
+use surface::Surface;
+use ui::EguiRenderer;
 
 struct State {
     surface: Surface,
@@ -55,6 +59,7 @@ struct State {
     light_bind_group: wgpu::BindGroup,
     hdr: hdr::HdrPipeline,
     cubemap: CubeMapRenderer,
+    ui: EguiRenderer,
 }
 
 impl State {
@@ -66,7 +71,7 @@ impl State {
             ..Default::default()
         });
 
-        let surface = instance.create_surface(window).unwrap();
+        let surface = instance.create_surface(window.clone()).unwrap();
 
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -300,6 +305,7 @@ impl State {
                 &shader,
             )
         });
+        let ui = EguiRenderer::new(&device, hdr.format(), None, 1, &window);
         Self {
             surface,
             device,
@@ -321,6 +327,7 @@ impl State {
             light_bind_group,
             hdr,
             cubemap,
+            ui,
         }
     }
 
@@ -341,7 +348,10 @@ impl State {
         }
     }
 
-    fn input(&mut self, event: &WindowEvent) -> bool {
+    fn input(&mut self, window: &Window, event: &WindowEvent) -> bool {
+        if self.ui.handle_input(window, event) {
+            return true;
+        }
         match event {
             WindowEvent::KeyboardInput {
                 event:
@@ -416,7 +426,7 @@ impl State {
             .write_buffer(&self.light_buffer, 0, bytemuck::cast_slice(&[self.light]));
     }
 
-    fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
+    fn render(&mut self, window: &Window) -> Result<(), wgpu::SurfaceError> {
         let output = SurfaceTextureRenderTarget::new(&self.surface)?;
         let mut cmd_encoder = self
             .device
@@ -472,6 +482,31 @@ impl State {
                 0..self.instances.len() as u32,
             );
         }
+        let size = self.surface.extent();
+        let screen_descriptor = ScreenDescriptor {
+            size_in_pixels: [size.width, size.height],
+            pixels_per_point: window.scale_factor() as f32,
+        };
+        self.ui.draw(
+            &self.device,
+            &self.queue,
+            &mut cmd_encoder,
+            window,
+            self.hdr.view(),
+            screen_descriptor,
+            |ui| {
+                egui::Window::new("Test")
+                    .resizable(true)
+                    .vscroll(true)
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        ui.label("Window!");
+                        ui.label("Window!");
+                        ui.label("Window!");
+                        ui.label("Window!");
+                    });
+            },
+        );
         self.hdr.process(&mut cmd_encoder, output.view());
 
         self.queue.submit(std::iter::once(cmd_encoder.finish()));
@@ -495,7 +530,7 @@ pub async fn run() {
             ref event,
             window_id: win_id,
         } if win_id == window_id => {
-            if !state.input(event) {
+            if !state.input(&window, event) {
                 match event {
                     WindowEvent::CloseRequested
                     | WindowEvent::KeyboardInput {
@@ -513,7 +548,7 @@ pub async fn run() {
                         let dt = now - last_render_time;
                         state.update(dt);
                         last_render_time = now;
-                        match state.render() {
+                        match state.render(&window) {
                             Ok(()) => (),
                             Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
                             Err(wgpu::SurfaceError::OutOfMemory) => {
