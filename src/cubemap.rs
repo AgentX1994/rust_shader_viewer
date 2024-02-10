@@ -4,7 +4,7 @@ use crate::shader::Shader;
 use crate::texture::{CubeTexture, Texture};
 
 pub struct CubeMapRenderer {
-    texture: CubeTexture,
+    _texture: CubeTexture,
     layout: wgpu::BindGroupLayout,
     bind_group: wgpu::BindGroup,
     pipeline: RenderPipeline,
@@ -93,7 +93,7 @@ impl CubeMapRenderer {
         };
 
         Self {
-            texture,
+            _texture: texture,
             layout,
             bind_group,
             pipeline,

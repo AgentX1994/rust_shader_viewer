@@ -12,7 +12,7 @@ use winit::{
 };
 
 use cgmath::prelude::*;
-use log::{error, info};
+use log::{debug, error, info};
 use wgpu::util::DeviceExt;
 
 mod camera;
@@ -36,7 +36,7 @@ use pipeline::RenderPipeline;
 use render_target::{RenderTarget, SurfaceTextureRenderTarget};
 use shader::Shader;
 use surface::Surface;
-use ui::EguiRenderer;
+use ui::{EguiDrawParams, EguiRenderer};
 
 struct State {
     surface: Surface,
@@ -95,6 +95,11 @@ impl State {
             .unwrap();
 
         let surface = Surface::new((size.width, size.height), surface, &adapter, &device);
+        debug!(
+            "Surface created, surface: {:?}, capabilities: {:?}",
+            surface.surface(),
+            surface.capabilities()
+        );
         let surface_size = surface.extent();
 
         let depth_texture =
@@ -487,14 +492,14 @@ impl State {
             size_in_pixels: [size.width, size.height],
             pixels_per_point: window.scale_factor() as f32,
         };
-        self.ui.draw(
-            &self.device,
-            &self.queue,
-            &mut cmd_encoder,
+        let draw_params = EguiDrawParams {
+            device: &self.device,
+            queue: &self.queue,
+            encoder: &mut cmd_encoder,
             window,
-            self.hdr.view(),
+            view: self.hdr.view(),
             screen_descriptor,
-            |ui| {
+            run_ui: |ui| {
                 egui::Window::new("Test")
                     .resizable(true)
                     .vscroll(true)
@@ -506,7 +511,8 @@ impl State {
                         ui.label("Window!");
                     });
             },
-        );
+        };
+        self.ui.draw(draw_params);
         self.hdr.process(&mut cmd_encoder, output.view());
 
         self.queue.submit(std::iter::once(cmd_encoder.finish()));

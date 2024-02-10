@@ -1,3 +1,5 @@
+use log::info;
+
 use crate::shader::Shader;
 
 pub struct RenderPipeline {
@@ -54,6 +56,7 @@ impl RenderPipeline {
             },
             multiview: None,
         });
+        info!("Pipeline created for shader {}", shader.name());
         Self { pipeline }
     }
 }

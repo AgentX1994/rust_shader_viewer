@@ -1,9 +1,17 @@
-use std::sync::Arc;
-
 use egui::Context;
 use egui_wgpu::{Renderer, ScreenDescriptor};
 use egui_winit::State;
 use winit::{event::WindowEvent, window::Window};
+
+pub struct EguiDrawParams<'a, U: FnOnce(&Context)> {
+    pub device: &'a wgpu::Device,
+    pub queue: &'a wgpu::Queue,
+    pub encoder: &'a mut wgpu::CommandEncoder,
+    pub window: &'a Window,
+    pub view: &'a wgpu::TextureView,
+    pub screen_descriptor: ScreenDescriptor,
+    pub run_ui: U,
+}
 
 pub struct EguiRenderer {
     state: State,
@@ -19,7 +27,8 @@ impl EguiRenderer {
         window: &Window,
     ) -> Self {
         let context = Context::default();
-        let mut state = State::new(context, Default::default(), &window, None, None);
+        let viewport_id = context.viewport_id();
+        let state = State::new(context, viewport_id, &window, None, None);
         let renderer = Renderer::new(device, format, depth_format, msaa_samples);
 
         EguiRenderer { state, renderer }
@@ -30,21 +39,21 @@ impl EguiRenderer {
         res.consumed
     }
 
-    pub fn draw(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
-        window: &Window,
-        view: &wgpu::TextureView,
-        screen_descriptor: ScreenDescriptor,
-        run_ui: impl FnOnce(&Context),
-    ) {
-        let raw_input = self.state.take_egui_input(&window);
+    pub fn draw<U: FnOnce(&Context)>(&mut self, draw_params: EguiDrawParams<'_, U>) {
+        let EguiDrawParams {
+            device,
+            queue,
+            encoder,
+            window,
+            view,
+            screen_descriptor,
+            run_ui,
+        } = draw_params;
+        let raw_input = self.state.take_egui_input(window);
         let full_output = self.state.egui_ctx().run(raw_input, |ui| run_ui(ui));
 
         self.state
-            .handle_platform_output(&window, full_output.platform_output);
+            .handle_platform_output(window, full_output.platform_output);
         let tris = self
             .state
             .egui_ctx()

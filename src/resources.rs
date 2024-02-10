@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use image::codecs::hdr::HdrDecoder;
 use wgpu::util::DeviceExt;
 
+use crate::texture::CubeTextureCreate2dParams;
 use crate::{model, texture};
 
 fn get_path_for_file(file_name: &str) -> PathBuf {
@@ -280,16 +281,19 @@ impl HdrLoader {
             src.size,
         );
 
-        let dst = texture::CubeTexture::create_2d(
-            device,
-            dst_size,
-            dst_size,
-            self.texture_format,
-            1,
-            wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
-            wgpu::FilterMode::Nearest,
-            label,
-        );
+        let dst = {
+            let params = CubeTextureCreate2dParams {
+                device,
+                width: dst_size,
+                height: dst_size,
+                format: self.texture_format,
+                mip_level_count: 1,
+                usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+                mag_filter: wgpu::FilterMode::Nearest,
+                label,
+            };
+            texture::CubeTexture::create_2d(params)
+        };
 
         let dst_view = dst.texture().create_view(&wgpu::TextureViewDescriptor {
             label,

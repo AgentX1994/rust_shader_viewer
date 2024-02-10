@@ -37,6 +37,7 @@ impl Shader {
             module,
         }
     }
+
     pub fn new_wgsl(
         device: &wgpu::Device,
         name: &str,
@@ -51,6 +52,10 @@ impl Shader {
             fragment_entry_point,
             wgpu::ShaderSource::Wgsl(source.into()),
         )
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     pub fn get_vertex_module(&self) -> &wgpu::ShaderModule {

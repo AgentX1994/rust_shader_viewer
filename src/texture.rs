@@ -180,6 +180,17 @@ impl Texture {
     }
 }
 
+pub struct CubeTextureCreate2dParams<'a> {
+    pub device: &'a wgpu::Device,
+    pub width: u32,
+    pub height: u32,
+    pub format: wgpu::TextureFormat,
+    pub mip_level_count: u32,
+    pub usage: wgpu::TextureUsages,
+    pub mag_filter: wgpu::FilterMode,
+    pub label: Option<&'a str>,
+}
+
 pub struct CubeTexture {
     texture: wgpu::Texture,
     sampler: wgpu::Sampler,
@@ -187,16 +198,17 @@ pub struct CubeTexture {
 }
 
 impl CubeTexture {
-    pub fn create_2d(
-        device: &wgpu::Device,
-        width: u32,
-        height: u32,
-        format: wgpu::TextureFormat,
-        mip_level_count: u32,
-        usage: wgpu::TextureUsages,
-        mag_filter: wgpu::FilterMode,
-        label: Option<&str>,
-    ) -> Self {
+    pub fn create_2d(params: CubeTextureCreate2dParams<'_>) -> Self {
+        let CubeTextureCreate2dParams {
+            device,
+            width,
+            height,
+            format,
+            mip_level_count,
+            usage,
+            mag_filter,
+            label,
+        } = params;
         let size = wgpu::Extent3d {
             width,
             height,
