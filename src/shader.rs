@@ -1,3 +1,58 @@
+use log::{error, warn};
+
+use naga::front::{glsl, wgsl};
+
+fn get_entry_points(name: &str, modules: &[&naga::Module]) -> (String, String) {
+    let mut vertex_entry_point: Option<String> = None;
+    let mut fragment_entry_point: Option<String> = None;
+    for module in modules {
+        for entry_point in &module.entry_points {
+            match entry_point.stage {
+                naga::ShaderStage::Vertex => {
+                    if vertex_entry_point.is_some() {
+                        warn!("Shader {} has more than one vertex entry point!", name);
+                    } else {
+                        vertex_entry_point = Some(entry_point.name.clone());
+                    }
+                }
+                naga::ShaderStage::Fragment => {
+                    if fragment_entry_point.is_some() {
+                        warn!("Shader {} has more than one fragment entry point!", name);
+                    } else {
+                        fragment_entry_point = Some(entry_point.name.clone());
+                    }
+                }
+                naga::ShaderStage::Compute => (),
+            }
+        }
+    }
+
+    // TODO error handling
+    match (vertex_entry_point, fragment_entry_point) {
+        (None, None) => {
+            error!("Shader {} has no vertex or fragment entry points!", name);
+            panic!("Shader has no entry points!")
+        }
+        (None, Some(_)) => {
+            error!("Shader {} has no vertex entry point!", name);
+            panic!("Shader has no vertex entry point!")
+        }
+        (Some(_), None) => {
+            error!("Shader {} has no fragment entry point!", name);
+            panic!("Shader has no vertex entry point!")
+        }
+        (Some(v), Some(s)) => (v, s),
+    }
+}
+
+enum ShaderInput<'a> {
+    Wgsl(wgpu::ShaderSource<'a>),
+    Glsl {
+        vertex: wgpu::ShaderSource<'a>,
+        fragment: wgpu::ShaderSource<'a>,
+    },
+}
+
 enum ShaderModule {
     Wgsl {
         module: wgpu::ShaderModule,
@@ -21,14 +76,32 @@ impl Shader {
         name: &str,
         vertex_entry_point: &str,
         fragment_entry_point: &str,
-        source: wgpu::ShaderSource,
+        source: ShaderInput,
     ) -> Self {
-        let desc = wgpu::ShaderModuleDescriptor {
-            label: Some(name),
-            source,
-        };
-        let module = ShaderModule::Wgsl {
-            module: device.create_shader_module(desc),
+        let module = match source {
+            ShaderInput::Wgsl(source) => {
+                let desc = wgpu::ShaderModuleDescriptor {
+                    label: Some(name),
+                    source,
+                };
+                ShaderModule::Wgsl {
+                    module: device.create_shader_module(desc),
+                }
+            }
+            ShaderInput::Glsl { vertex, fragment } => {
+                let vert_desc = wgpu::ShaderModuleDescriptor {
+                    label: Some(name),
+                    source: vertex,
+                };
+                let frag_desc = wgpu::ShaderModuleDescriptor {
+                    label: Some(name),
+                    source: fragment,
+                };
+                ShaderModule::Glsl {
+                    vertex: device.create_shader_module(vert_desc),
+                    fragment: device.create_shader_module(frag_desc),
+                }
+            }
         };
         Self {
             name: name.into(),
@@ -41,17 +114,55 @@ impl Shader {
     pub fn new_wgsl(
         device: &wgpu::Device,
         name: &str,
-        vertex_entry_point: &str,
-        fragment_entry_point: &str,
         source: &str,
-    ) -> Self {
-        Self::new(
+    ) -> Result<Self, wgsl::ParseError> {
+        let mut frontend = wgsl::Frontend::new();
+        let module = frontend.parse(source)?;
+        let (vertex_entry_point, fragment_entry_point) = get_entry_points(name, &[&module]);
+        Ok(Self::new(
             device,
             name,
-            vertex_entry_point,
-            fragment_entry_point,
-            wgpu::ShaderSource::Wgsl(source.into()),
-        )
+            &vertex_entry_point,
+            &fragment_entry_point,
+            ShaderInput::Wgsl(wgpu::ShaderSource::Wgsl(source.into())),
+        ))
+    }
+
+    fn new_glsl(
+        device: &wgpu::Device,
+        name: &str,
+        vertex_source: &str,
+        fragment_source: &str,
+    ) -> Result<Self, Vec<glsl::Error>> {
+        let mut frontend = glsl::Frontend::default();
+        let vert_module = frontend.parse(
+            &glsl::Options::from(naga::ShaderStage::Vertex),
+            vertex_source,
+        )?;
+        let frag_module = frontend.parse(
+            &glsl::Options::from(naga::ShaderStage::Vertex),
+            fragment_source,
+        )?;
+        let (vertex_entry_point, fragment_entry_point) =
+            get_entry_points(name, &[&vert_module, &frag_module]);
+        Ok(Self::new(
+            device,
+            name,
+            &vertex_entry_point,
+            &fragment_entry_point,
+            ShaderInput::Glsl {
+                vertex: wgpu::ShaderSource::Glsl {
+                    shader: vertex_source.into(),
+                    stage: naga::ShaderStage::Vertex,
+                    defines: Default::default(),
+                },
+                fragment: wgpu::ShaderSource::Glsl {
+                    shader: fragment_source.into(),
+                    stage: naga::ShaderStage::Fragment,
+                    defines: Default::default(),
+                },
+            },
+        ))
     }
 
     pub fn name(&self) -> &str {

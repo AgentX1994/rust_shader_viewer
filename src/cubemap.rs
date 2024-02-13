@@ -77,10 +77,9 @@ impl CubeMapRenderer {
             let shader = Shader::new_wgsl(
                 device,
                 "cubemap",
-                "vs_main",
-                "fs_main",
                 include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/sky.wgsl")),
-            );
+            )
+            .expect("Could not parse cubemap shader");
             RenderPipeline::new(
                 device,
                 &layout,

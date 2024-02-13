@@ -270,7 +270,8 @@ impl State {
             );
 
         let render_pipeline = {
-            let shader = Shader::new_wgsl(&device, "normal", "vs_main", "fs_main", &shader_source);
+            let shader = Shader::new_wgsl(&device, "normal", &shader_source)
+                .expect("Could not parse normal shader");
             RenderPipeline::new(
                 &device,
                 &render_pipeline_layout,
@@ -293,13 +294,12 @@ impl State {
             let shader = Shader::new_wgsl(
                 &device,
                 "Light",
-                "vs_main",
-                "fs_main",
                 include_str!(concat!(
                     env!("CARGO_MANIFEST_DIR"),
                     "/shaders/light_shader.wgsl"
                 )),
-            );
+            )
+            .expect("Could not parse light shader");
             RenderPipeline::new(
                 &device,
                 &light_render_pipeline_layout,
@@ -393,13 +393,8 @@ impl State {
         info!("Compiling shader");
         self.render_pipeline = {
             // TODO: get entry points from shader source?
-            let shader = Shader::new_wgsl(
-                &self.device,
-                "shader",
-                "vs_main",
-                "fs_main",
-                &self.shader_source,
-            );
+            let shader = Shader::new_wgsl(&self.device, "shader", &self.shader_source)
+                .expect("Could not parse shader");
             RenderPipeline::new(
                 &self.device,
                 &self.render_pipeline_layout,

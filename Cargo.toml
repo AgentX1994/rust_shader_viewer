@@ -13,11 +13,12 @@ egui-winit = "0.26.0"
 env_logger = "0.11.0"
 image = { version = "0.24.8", features = ["png", "jpeg"] }
 log = "0.4.20"
+naga = { version = "0.19.0", features = ["wgsl-in", "compact", "glsl-in"] }
 pollster = "0.3.0"
 rfd = "0.13.0"
 syntect = { version = "5.2.0", features = ["default-fancy"] }
 tobj = { version = "4.0.1", features = ["async"] }
-wgpu = "0.19.1"
+wgpu = { version = "0.19.1", features = ["naga-ir", "glsl"] }
 winit = "0.29.10"
 
 [build-dependencies]
