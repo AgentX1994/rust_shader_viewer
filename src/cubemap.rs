@@ -1,3 +1,4 @@
+use crate::error::RendererResult;
 use crate::pipeline::RenderPipeline;
 use crate::resources;
 use crate::shader::Shader;
@@ -18,16 +19,12 @@ impl CubeMapRenderer {
         surface_format: wgpu::TextureFormat,
         filename: &str,
         label: Option<&str>,
-    ) -> Self {
+    ) -> RendererResult<Self> {
         // TODO error handling
         let texture = {
             let hdr_loader = resources::HdrLoader::new(device);
-            let sky_bytes = resources::load_binary(filename)
-                .await
-                .expect("Unable to load cubemap texture");
-            hdr_loader
-                .cube_from_equirectangular_bytes(device, queue, &sky_bytes, 1080, label)
-                .expect("Unable to load cubemap texture")
+            let sky_bytes = resources::load_binary(filename).await?;
+            hdr_loader.cube_from_equirectangular_bytes(device, queue, &sky_bytes, 1080, label)?
         };
 
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -91,12 +88,12 @@ impl CubeMapRenderer {
             )
         };
 
-        Self {
+        Ok(Self {
             _texture: texture,
             layout,
             bind_group,
             pipeline,
-        }
+        })
     }
 
     pub fn layout(&self) -> &wgpu::BindGroupLayout {

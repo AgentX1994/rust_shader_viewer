@@ -4,7 +4,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+use egui::{Color32, RichText};
 use egui_wgpu::ScreenDescriptor;
+use error::RendererResult;
 use winit::{
     event::*,
     event_loop::EventLoop,
@@ -18,6 +20,7 @@ use wgpu::util::DeviceExt;
 
 mod camera;
 mod cubemap;
+mod error;
 mod hdr;
 mod light;
 mod model;
@@ -49,6 +52,7 @@ struct State {
     mouse_pressed: bool,
     depth_texture: texture::Texture,
     shader_source: String,
+    shader_compile_error: Option<String>,
     render_pipeline_layout: wgpu::PipelineLayout,
     render_pipeline: RenderPipeline,
     light_render_pipeline: RenderPipeline,
@@ -64,7 +68,10 @@ struct State {
 }
 
 impl State {
-    async fn new<P: AsRef<Path>>(window: Arc<Window>, starting_shader: Option<P>) -> Self {
+    async fn new<P: AsRef<Path>>(
+        window: Arc<Window>,
+        starting_shader: Option<P>,
+    ) -> RendererResult<Self> {
         let size = window.inner_size();
 
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -238,7 +245,7 @@ impl State {
             "pure-sky.hdr",
             Some("Sky Cubemap"),
         )
-        .await;
+        .await?;
 
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -311,7 +318,7 @@ impl State {
             )
         };
         let ui = EguiRenderer::new(&device, hdr.format(), None, 1, &window);
-        Self {
+        Ok(Self {
             surface,
             device,
             queue,
@@ -323,6 +330,7 @@ impl State {
             render_pipeline_layout,
             render_pipeline,
             shader_source,
+            shader_compile_error: None,
             light_render_pipeline,
             model,
             instances,
@@ -333,7 +341,7 @@ impl State {
             hdr,
             cubemap,
             ui,
-        }
+        })
     }
 
     fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
@@ -391,23 +399,28 @@ impl State {
 
     fn compile_shader(&mut self) {
         info!("Compiling shader");
-        self.render_pipeline = {
-            // TODO: get entry points from shader source?
-            let shader = Shader::new_wgsl(&self.device, "shader", &self.shader_source)
-                .expect("Could not parse shader");
-            RenderPipeline::new(
-                &self.device,
-                &self.render_pipeline_layout,
-                self.hdr.format(),
-                Some(texture::Texture::DEPTH_FORMAT),
-                &[model::ModelVertex::layout(), Instance::desc()],
-                wgpu::PrimitiveTopology::TriangleList,
-                &shader,
-            )
+        let shader = match Shader::new_wgsl(&self.device, "shader", &self.shader_source) {
+            Ok(s) => {
+                self.shader_compile_error = None;
+                s
+            }
+            Err(e) => {
+                self.shader_compile_error = Some(e.to_string());
+                return;
+            }
         };
+        self.render_pipeline = RenderPipeline::new(
+            &self.device,
+            &self.render_pipeline_layout,
+            self.hdr.format(),
+            Some(texture::Texture::DEPTH_FORMAT),
+            &[model::ModelVertex::layout(), Instance::desc()],
+            wgpu::PrimitiveTopology::TriangleList,
+            &shader,
+        );
     }
 
-    fn load_shader<P: AsRef<Path>>(&mut self, shader_file_path: P) -> anyhow::Result<()> {
+    fn load_shader<P: AsRef<Path>>(&mut self, shader_file_path: P) -> RendererResult<()> {
         let source = std::fs::read_to_string(shader_file_path)?;
         self.shader_source = source;
         self.compile_shader();
@@ -520,6 +533,10 @@ impl State {
                             }
                         }
 
+                        if let Some(err) = &self.shader_compile_error {
+                            ui.label(RichText::new(err).color(Color32::RED));
+                        }
+
                         ui.heading("Shader Source");
                         let mut theme = CodeTheme::from_memory(ui.ctx());
                         ui.collapsing("Theme Settings", |ui| {
@@ -595,15 +612,15 @@ impl State {
     }
 }
 
-pub async fn run() {
+pub async fn run() -> RendererResult<()> {
     let event_loop = EventLoop::new().unwrap();
     let window = Arc::new(WindowBuilder::new().build(&event_loop).unwrap());
 
     let window_id = window.id();
-    let mut state = State::new(window.clone(), std::env::args().nth(1)).await;
+    let mut state = State::new(window.clone(), std::env::args().nth(1)).await?;
     let mut last_render_time = Instant::now();
 
-    let res = event_loop.run(move |event, control_flow| match event {
+    Ok(event_loop.run(move |event, control_flow| match event {
         Event::WindowEvent {
             ref event,
             window_id: win_id,
@@ -648,6 +665,5 @@ pub async fn run() {
         }
         Event::AboutToWait => window.request_redraw(),
         _ => (),
-    });
-    res.expect("Error running event loop!");
+    })?)
 }

@@ -1,4 +1,4 @@
-use anyhow::*;
+use crate::error::RendererResult;
 
 pub struct Texture {
     pub texture: wgpu::Texture,
@@ -16,7 +16,7 @@ impl Texture {
         bytes: &[u8],
         label: &str,
         is_normal_map: bool,
-    ) -> Result<Self> {
+    ) -> RendererResult<Self> {
         let image = image::load_from_memory(bytes)?;
         Self::from_image(device, queue, &image, label, is_normal_map)
     }
@@ -27,7 +27,7 @@ impl Texture {
         image: &image::DynamicImage,
         label: &str,
         is_normal_map: bool,
-    ) -> Result<Self> {
+    ) -> RendererResult<Self> {
         let rgba = image.to_rgba8();
         let dims = rgba.dimensions();
         let format = if is_normal_map {

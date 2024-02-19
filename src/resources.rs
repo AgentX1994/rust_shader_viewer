@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use image::codecs::hdr::HdrDecoder;
 use wgpu::util::DeviceExt;
 
+use crate::error::RendererResult;
 use crate::texture::CubeTextureCreate2dParams;
 use crate::{model, texture};
 
@@ -11,12 +12,12 @@ fn get_path_for_file(file_name: &str) -> PathBuf {
     [env!("OUT_DIR"), "res", file_name].iter().collect()
 }
 
-pub async fn load_string(file_name: &str) -> anyhow::Result<String> {
+pub async fn load_string(file_name: &str) -> RendererResult<String> {
     let path = get_path_for_file(file_name);
     Ok(std::fs::read_to_string(path)?)
 }
 
-pub async fn load_binary(file_name: &str) -> anyhow::Result<Vec<u8>> {
+pub async fn load_binary(file_name: &str) -> RendererResult<Vec<u8>> {
     let path = get_path_for_file(file_name);
     Ok(std::fs::read(path)?)
 }
@@ -26,7 +27,7 @@ pub async fn load_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     is_normal_map: bool,
-) -> anyhow::Result<texture::Texture> {
+) -> RendererResult<texture::Texture> {
     let data = load_binary(file_name).await?;
     texture::Texture::from_bytes(device, queue, &data, file_name, is_normal_map)
 }
@@ -36,7 +37,7 @@ pub async fn load_model(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     layout: &wgpu::BindGroupLayout,
-) -> anyhow::Result<model::Model> {
+) -> RendererResult<model::Model> {
     let obj_text = load_string(file_name).await?;
     let obj_cursor = Cursor::new(obj_text);
     let mut obj_reader = BufReader::new(obj_cursor);
@@ -244,7 +245,7 @@ impl HdrLoader {
         data: &[u8],
         dst_size: u32,
         label: Option<&str>,
-    ) -> anyhow::Result<texture::CubeTexture> {
+    ) -> RendererResult<texture::CubeTexture> {
         let hdr_decoder = HdrDecoder::new(Cursor::new(data))?;
         let meta = hdr_decoder.metadata();
         let mut pixels = vec![[0.0, 0.0, 0.0, 0.0]; meta.width as usize * meta.height as usize];

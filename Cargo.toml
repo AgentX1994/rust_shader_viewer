@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-anyhow = "1.0.79"
 bytemuck = { version = "1.14.0", features = ["derive"] }
 cgmath = "0.18.0"
 egui = { version = "0.26.0", features = ["log"] }
@@ -17,6 +16,7 @@ naga = { version = "0.19.0", features = ["wgsl-in", "compact", "glsl-in"] }
 pollster = "0.3.0"
 rfd = "0.13.0"
 syntect = { version = "5.2.0", features = ["default-fancy"] }
+thiserror = "1.0.57"
 tobj = { version = "4.0.1", features = ["async"] }
 wgpu = { version = "0.19.1", features = ["naga-ir", "glsl"] }
 winit = "0.29.10"
