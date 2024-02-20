@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use log::{error, warn};
 
 use wgpu::naga::front::{glsl, wgsl};
@@ -130,7 +132,7 @@ impl Shader {
             name,
             &vertex_entry_point,
             &fragment_entry_point,
-            ShaderInput::Wgsl(wgpu::ShaderSource::Wgsl(source.into())),
+            ShaderInput::Wgsl(wgpu::ShaderSource::Naga(Cow::Owned(module))),
         ))
     }
 
@@ -157,16 +159,8 @@ impl Shader {
             &vertex_entry_point,
             &fragment_entry_point,
             ShaderInput::Glsl {
-                vertex: wgpu::ShaderSource::Glsl {
-                    shader: vertex_source.into(),
-                    stage: wgpu::naga::ShaderStage::Vertex,
-                    defines: Default::default(),
-                },
-                fragment: wgpu::ShaderSource::Glsl {
-                    shader: fragment_source.into(),
-                    stage: wgpu::naga::ShaderStage::Fragment,
-                    defines: Default::default(),
-                },
+                vertex: wgpu::ShaderSource::Naga(Cow::Owned(vert_module)),
+                fragment: wgpu::ShaderSource::Naga(Cow::Owned(frag_module)),
             },
         ))
     }
