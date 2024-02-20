@@ -1,30 +1,33 @@
 use log::{error, warn};
 
-use naga::front::{glsl, wgsl};
+use wgpu::naga::front::{glsl, wgsl};
 
 use crate::error::{RendererError, RendererResult};
 
-fn get_entry_points(name: &str, modules: &[&naga::Module]) -> RendererResult<(String, String)> {
+fn get_entry_points(
+    name: &str,
+    modules: &[&wgpu::naga::Module],
+) -> RendererResult<(String, String)> {
     let mut vertex_entry_point: Option<String> = None;
     let mut fragment_entry_point: Option<String> = None;
     for module in modules {
         for entry_point in &module.entry_points {
             match entry_point.stage {
-                naga::ShaderStage::Vertex => {
+                wgpu::naga::ShaderStage::Vertex => {
                     if vertex_entry_point.is_some() {
                         warn!("Shader {} has more than one vertex entry point!", name);
                     } else {
                         vertex_entry_point = Some(entry_point.name.clone());
                     }
                 }
-                naga::ShaderStage::Fragment => {
+                wgpu::naga::ShaderStage::Fragment => {
                     if fragment_entry_point.is_some() {
                         warn!("Shader {} has more than one fragment entry point!", name);
                     } else {
                         fragment_entry_point = Some(entry_point.name.clone());
                     }
                 }
-                naga::ShaderStage::Compute => (),
+                wgpu::naga::ShaderStage::Compute => (),
             }
         }
     }
@@ -139,11 +142,11 @@ impl Shader {
     ) -> RendererResult<Self> {
         let mut frontend = glsl::Frontend::default();
         let vert_module = frontend.parse(
-            &glsl::Options::from(naga::ShaderStage::Vertex),
+            &glsl::Options::from(wgpu::naga::ShaderStage::Vertex),
             vertex_source,
         )?;
         let frag_module = frontend.parse(
-            &glsl::Options::from(naga::ShaderStage::Vertex),
+            &glsl::Options::from(wgpu::naga::ShaderStage::Vertex),
             fragment_source,
         )?;
         let (vertex_entry_point, fragment_entry_point) =
@@ -156,12 +159,12 @@ impl Shader {
             ShaderInput::Glsl {
                 vertex: wgpu::ShaderSource::Glsl {
                     shader: vertex_source.into(),
-                    stage: naga::ShaderStage::Vertex,
+                    stage: wgpu::naga::ShaderStage::Vertex,
                     defines: Default::default(),
                 },
                 fragment: wgpu::ShaderSource::Glsl {
                     shader: fragment_source.into(),
-                    stage: naga::ShaderStage::Fragment,
+                    stage: wgpu::naga::ShaderStage::Fragment,
                     defines: Default::default(),
                 },
             },

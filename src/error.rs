@@ -1,6 +1,6 @@
-use naga::front::glsl;
-use naga::front::wgsl;
 use thiserror::Error;
+use wgpu::naga::front::glsl;
+use wgpu::naga::front::wgsl;
 
 use image::ImageError;
 use tobj::LoadError;

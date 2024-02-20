@@ -1936,7 +1936,6 @@ dependencies = [
  "glob",
  "image",
  "log",
- "naga",
  "pollster",
  "rfd",
  "syntect",
