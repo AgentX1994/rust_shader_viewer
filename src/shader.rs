@@ -57,10 +57,62 @@ fn get_entry_points(
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq, Eq)]
 struct OwningBindGroupLayoutDescriptor {
     label: Option<String>,
     entries: Vec<wgpu::BindGroupLayoutEntry>,
+}
+
+impl OwningBindGroupLayoutDescriptor {
+    fn check_compatible(&self, other: &wgpu::BindGroupLayoutDescriptor) -> bool {
+        if self.entries.len() != other.entries.len() {
+            false
+        } else {
+            let mut my_entries_sorted = self.entries.clone();
+            my_entries_sorted.sort_by(|ent1, ent2| ent1.binding.cmp(&ent2.binding));
+            let mut other_entries_sorted = other.entries.to_owned();
+            other_entries_sorted.sort_by(|ent1, ent2| ent1.binding.cmp(&ent2.binding));
+            for (entry1, entry2) in my_entries_sorted.iter().zip(other_entries_sorted) {
+                if entry1.binding != entry2.binding {
+                    return false;
+                }
+                // TODO figure out how to do this
+                if !entry2.visibility.intersects(entry1.visibility) {
+                    return false;
+                }
+                if entry1.ty != entry2.ty {
+                    use wgpu::{BindingType, SamplerBindingType, TextureSampleType};
+                    match (entry1.ty, entry2.ty) {
+                        (
+                            BindingType::Texture {
+                                sample_type: TextureSampleType::Float { filterable: true },
+                                ..
+                            },
+                            BindingType::Texture {
+                                sample_type: TextureSampleType::Float { filterable: false },
+                                ..
+                            },
+                        ) => (),
+                        (
+                            BindingType::Sampler(SamplerBindingType::Filtering),
+                            BindingType::Sampler(SamplerBindingType::NonFiltering),
+                        ) => (),
+                        _ => return false,
+                    }
+                }
+                if let Some(entry1_count) = &entry1.count {
+                    if let Some(entry2_count) = &entry2.count {
+                        if entry1_count > entry2_count {
+                            return false;
+                        }
+                    } else {
+                        return false;
+                    }
+                }
+            }
+            true
+        }
+    }
 }
 
 fn naga_type_to_binding_group_type(ty: &wgpu::naga::Type) -> wgpu::BindingType {
@@ -327,5 +379,15 @@ impl Shader {
                 entries: &d.entries,
             })
             .collect()
+    }
+
+    pub fn layout_matches(&self, other: &[&wgpu::BindGroupLayoutDescriptor<'_>]) -> bool {
+        if self.layout.len() != other.len() {
+            return false;
+        }
+        self.layout
+            .iter()
+            .zip(other.iter())
+            .all(|(my_desc, other_desc)| my_desc.check_compatible(other_desc))
     }
 }

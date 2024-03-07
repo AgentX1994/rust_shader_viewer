@@ -5,6 +5,7 @@ use crate::shader::Shader;
 use crate::texture::{CubeTexture, Texture};
 
 pub struct CubeMapRenderer {
+    label: Option<String>,
     _texture: CubeTexture,
     layout: wgpu::BindGroupLayout,
     bind_group: wgpu::BindGroup,
@@ -15,6 +16,7 @@ impl CubeMapRenderer {
     pub async fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        camera_bind_group_layout_desc: &wgpu::BindGroupLayoutDescriptor<'_>,
         camera_bind_group_layout: &wgpu::BindGroupLayout,
         surface_format: wgpu::TextureFormat,
         filename: &str,
@@ -27,7 +29,7 @@ impl CubeMapRenderer {
             hdr_loader.cube_from_equirectangular_bytes(device, queue, &sky_bytes, 1080, label)?
         };
 
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let desc = wgpu::BindGroupLayoutDescriptor {
             label,
             entries: &[
                 wgpu::BindGroupLayoutEntry {
@@ -47,7 +49,8 @@ impl CubeMapRenderer {
                     count: None,
                 },
             ],
-        });
+        };
+        let layout = device.create_bind_group_layout(&desc);
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label,
@@ -77,6 +80,7 @@ impl CubeMapRenderer {
                 include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/sky.wgsl")),
             )
             .expect("Could not parse cubemap shader");
+            assert!(shader.layout_matches(&[camera_bind_group_layout_desc, &desc]));
             RenderPipeline::new(
                 device,
                 &layout,
@@ -89,6 +93,7 @@ impl CubeMapRenderer {
         };
 
         Ok(Self {
+            label: label.map(str::to_owned),
             _texture: texture,
             layout,
             bind_group,
@@ -98,6 +103,30 @@ impl CubeMapRenderer {
 
     pub fn layout(&self) -> &wgpu::BindGroupLayout {
         &self.layout
+    }
+
+    pub fn layout_desc(&self) -> wgpu::BindGroupLayoutDescriptor {
+        wgpu::BindGroupLayoutDescriptor {
+            label: self.label.as_deref(),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::Cube,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                    count: None,
+                },
+            ],
+        }
     }
 
     pub fn bind_group(&self) -> &wgpu::BindGroup {

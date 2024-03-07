@@ -36,7 +36,7 @@ impl HdrPipeline {
             Some("Hdr::texture"),
         );
 
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let desc = wgpu::BindGroupLayoutDescriptor {
             label: Some("Hdr::layout"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
@@ -56,7 +56,8 @@ impl HdrPipeline {
                     count: None,
                 },
             ],
-        });
+        };
+        let layout = device.create_bind_group_layout(&desc);
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Hdr::bind_group"),
             layout: &layout,
@@ -79,6 +80,7 @@ impl HdrPipeline {
             include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/hdr.wgsl")),
         )
         .expect("Could not parse hdr shader");
+        assert!(shader.layout_matches(&[&desc]));
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
             bind_group_layouts: &[&layout],

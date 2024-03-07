@@ -42,6 +42,66 @@ use shader::Shader;
 use surface::Surface;
 use ui::{highlight, CodeTheme, EguiDrawParams, EguiRenderer};
 
+const fn get_texture_layout_desc() -> wgpu::BindGroupLayoutDescriptor<'static> {
+    const LAYOUT_ENTRIES: [wgpu::BindGroupLayoutEntry; 4] = [
+        // diffuse texture
+        wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                multisampled: false,
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+            },
+            count: None,
+        },
+        wgpu::BindGroupLayoutEntry {
+            binding: 1,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        },
+        // normal map
+        wgpu::BindGroupLayoutEntry {
+            binding: 2,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                multisampled: false,
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+            },
+            count: None,
+        },
+        wgpu::BindGroupLayoutEntry {
+            binding: 3,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        },
+    ];
+    wgpu::BindGroupLayoutDescriptor {
+        label: Some("Bind Group Layout"),
+        entries: &LAYOUT_ENTRIES,
+    }
+}
+
+const fn get_light_layout_desc() -> wgpu::BindGroupLayoutDescriptor<'static> {
+    const LAYOUT_ENTRIES: [wgpu::BindGroupLayoutEntry; 1] = [wgpu::BindGroupLayoutEntry {
+        binding: 0,
+        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }];
+    wgpu::BindGroupLayoutDescriptor {
+        label: Some("Light Bind Group Layout"),
+        entries: &LAYOUT_ENTRIES,
+    }
+}
+
 struct State {
     surface: Surface,
     device: wgpu::Device,
@@ -113,46 +173,9 @@ impl State {
         let depth_texture =
             texture::Texture::create_depth_texture(&device, &surface_size, "depth_texture");
 
+        let texture_bind_group_layout_desc = get_texture_layout_desc();
         let texture_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Bind Group Layout"),
-                entries: &[
-                    // diffuse texture
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                    // normal map
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
+            device.create_bind_group_layout(&texture_bind_group_layout_desc);
 
         let camera = Camera::new((0.0, 5.0, 10.0), cgmath::Deg(-90.0), cgmath::Deg(-20.0));
         let projection = Projection::new(
@@ -212,20 +235,9 @@ impl State {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
+        let light_bind_group_layout_desc = get_light_layout_desc();
         let light_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Light Bind Group Layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
+            device.create_bind_group_layout(&light_bind_group_layout_desc);
 
         let light_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Light Bind Group"),
@@ -240,6 +252,7 @@ impl State {
         let cubemap = CubeMapRenderer::new(
             &device,
             &queue,
+            &PerspectiveCamera::layout_desc(),
             camera.layout(),
             hdr.format(),
             "pure-sky.hdr",
@@ -279,6 +292,12 @@ impl State {
         let render_pipeline = {
             let shader = Shader::new_wgsl(&device, "normal", &shader_source)
                 .expect("Could not parse normal shader");
+            assert!(shader.layout_matches(&[
+                &texture_bind_group_layout_desc,
+                &PerspectiveCamera::layout_desc(),
+                &light_bind_group_layout_desc,
+                &cubemap.layout_desc()
+            ]));
             RenderPipeline::new(
                 &device,
                 &render_pipeline_layout,
@@ -307,6 +326,10 @@ impl State {
                 )),
             )
             .expect("Could not parse light shader");
+            assert!(shader.layout_matches(&[
+                &PerspectiveCamera::layout_desc(),
+                &light_bind_group_layout_desc
+            ]));
             RenderPipeline::new(
                 &device,
                 &light_render_pipeline_layout,
@@ -409,6 +432,15 @@ impl State {
                 return;
             }
         };
+        if !shader.layout_matches(&[
+            &get_texture_layout_desc(),
+            &PerspectiveCamera::layout_desc(),
+            &get_light_layout_desc(),
+            &self.cubemap.layout_desc(),
+        ]) {
+            self.shader_compile_error = Some("Shader layout doesn't match!".to_string());
+            return;
+        }
         self.render_pipeline = RenderPipeline::new(
             &self.device,
             &self.render_pipeline_layout,
