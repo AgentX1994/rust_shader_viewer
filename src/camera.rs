@@ -149,7 +149,7 @@ impl PerspectiveCamera {
     }
 
     pub fn update(&mut self, controller: &mut CameraController, dt: Duration, queue: &wgpu::Queue) {
-        controller.update_camera(&mut self.camera, dt);
+        controller.update_camera(&mut self.camera, &mut self.projection, dt);
         self.uniform
             .update_view_projection(&self.camera, &self.projection);
         queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&[self.uniform]));
@@ -263,7 +263,12 @@ impl CameraController {
         }
     }
 
-    pub fn update_camera(&mut self, camera: &mut Camera, dt: Duration) {
+    pub fn update_camera(
+        &mut self,
+        camera: &mut Camera,
+        projection: &mut Projection,
+        dt: Duration,
+    ) {
         let dt = dt.as_secs_f32();
 
         // Movement
@@ -274,11 +279,15 @@ impl CameraController {
         camera.position += forward * (self.amount_forward - self.amount_backward) * self.speed * dt;
         camera.position += right * (self.amount_right - self.amount_left) * self.speed * dt;
 
+        const MIN_FOVY: Rad<f32> = Rad(0.1);
+        const MAX_FOVY: Rad<f32> = Rad(std::f32::consts::PI - 0.1);
         // Move in/out (fake zoom)
-        let (pitch_sin, pitch_cos) = camera.pitch.0.sin_cos();
-        let scrollward =
-            Vector3::new(pitch_cos * yaw_cos, pitch_sin, pitch_cos * yaw_sin).normalize();
-        camera.position += scrollward * self.scroll * self.speed * self.sensitivity * dt;
+        projection.fovy += Rad(-self.scroll / 100.0);
+        if projection.fovy <= MIN_FOVY {
+            projection.fovy = MIN_FOVY;
+        } else if projection.fovy >= MAX_FOVY {
+            projection.fovy = MAX_FOVY;
+        }
         self.scroll = 0.0;
 
         // Move up and down
