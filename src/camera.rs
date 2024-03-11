@@ -281,7 +281,6 @@ impl CameraController {
 
         const MIN_FOVY: Rad<f32> = Rad(0.1);
         const MAX_FOVY: Rad<f32> = Rad(std::f32::consts::PI - 0.1);
-        // Move in/out (fake zoom)
         projection.fovy += Rad(-self.scroll / 100.0);
         if projection.fovy <= MIN_FOVY {
             projection.fovy = MIN_FOVY;
