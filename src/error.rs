@@ -1,3 +1,5 @@
+use std::error;
+
 use thiserror::Error;
 use wgpu::naga::front::glsl;
 use wgpu::naga::front::wgsl;
@@ -22,6 +24,12 @@ pub enum RendererError {
     ObjLoad(#[from] LoadError),
     #[error("Error running event loop: {0}")]
     EventLoop(#[from] EventLoopError),
+    #[error("WGPU Validation Error: {source}\n\tDescription: {description}")]
+    WgpuValidationError {
+        #[source]
+        source: Box<dyn error::Error + Send + 'static>,
+        description: String,
+    },
 }
 
 impl From<Vec<glsl::Error>> for RendererError {

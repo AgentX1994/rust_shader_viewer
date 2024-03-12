@@ -1,5 +1,3 @@
-use std::borrow::Cow;
-
 use log::{error, info, warn};
 
 use wgpu::naga::front::{glsl, wgsl};
@@ -284,7 +282,8 @@ impl Shader {
         fragment_entry_point: &str,
         source: ShaderInput,
         layout: Vec<OwningBindGroupLayoutDescriptor>,
-    ) -> Self {
+    ) -> RendererResult<Self> {
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
         let module = match source {
             ShaderInput::Wgsl(source) => {
                 let desc = wgpu::ShaderModuleDescriptor {
@@ -310,13 +309,27 @@ impl Shader {
                 }
             }
         };
-        Self {
+        let error = pollster::block_on(device.pop_error_scope());
+        match error {
+            Some(wgpu::Error::Validation {
+                source,
+                description,
+            }) => {
+                return Err(RendererError::WgpuValidationError {
+                    source,
+                    description,
+                })
+            }
+            Some(wgpu::Error::OutOfMemory { .. }) => unreachable!(),
+            None => (),
+        }
+        Ok(Self {
             name: name.into(),
             vertex_entry_point: vertex_entry_point.to_owned(),
             fragment_entry_point: fragment_entry_point.to_owned(),
             module,
             layout,
-        }
+        })
     }
 
     pub fn new_wgsl(device: &wgpu::Device, name: &str, source: &str) -> RendererResult<Self> {
@@ -325,14 +338,14 @@ impl Shader {
         let (vertex_entry_point, fragment_entry_point) = get_entry_points(name, &[&module])?;
         let layout = get_binding_layout(&[(name, wgpu::ShaderStages::VERTEX_FRAGMENT, &module)]);
         info!("Layout for shader {}: {:?}", name, layout);
-        Ok(Self::new(
+        Self::new(
             device,
             name,
             &vertex_entry_point,
             &fragment_entry_point,
-            ShaderInput::Wgsl(wgpu::ShaderSource::Naga(Cow::Owned(module))),
+            ShaderInput::Wgsl(wgpu::ShaderSource::Wgsl(source.into())),
             layout,
-        ))
+        )
     }
 
     fn new_glsl(
@@ -357,17 +370,25 @@ impl Shader {
             (name, wgpu::ShaderStages::FRAGMENT, &frag_module),
         ]);
         info!("Layout for shader {}: {:?}", name, layout);
-        Ok(Self::new(
+        Self::new(
             device,
             name,
             &vertex_entry_point,
             &fragment_entry_point,
             ShaderInput::Glsl {
-                vertex: wgpu::ShaderSource::Naga(Cow::Owned(vert_module)),
-                fragment: wgpu::ShaderSource::Naga(Cow::Owned(frag_module)),
+                vertex: wgpu::ShaderSource::Glsl {
+                    shader: vertex_source.into(),
+                    stage: wgpu::naga::ShaderStage::Vertex,
+                    defines: Default::default(),
+                },
+                fragment: wgpu::ShaderSource::Glsl {
+                    shader: fragment_source.into(),
+                    stage: wgpu::naga::ShaderStage::Fragment,
+                    defines: Default::default(),
+                },
             },
             layout,
-        ))
+        )
     }
 
     pub fn name(&self) -> &str {
