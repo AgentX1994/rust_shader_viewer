@@ -292,12 +292,15 @@ impl State {
         let render_pipeline = {
             let shader = Shader::new_wgsl(&device, "normal", &shader_source)
                 .expect("Could not parse normal shader");
-            assert!(shader.layout_matches(&[
-                &texture_bind_group_layout_desc,
-                &PerspectiveCamera::layout_desc(),
-                &light_bind_group_layout_desc,
-                &cubemap.layout_desc()
-            ]));
+            assert_eq!(
+                shader.layout_matches(&[
+                    &texture_bind_group_layout_desc,
+                    &PerspectiveCamera::layout_desc(),
+                    &light_bind_group_layout_desc,
+                    &cubemap.layout_desc()
+                ]),
+                Ok(())
+            );
             RenderPipeline::new(
                 &device,
                 &render_pipeline_layout,
@@ -326,10 +329,13 @@ impl State {
                 )),
             )
             .expect("Could not parse light shader");
-            assert!(shader.layout_matches(&[
-                &PerspectiveCamera::layout_desc(),
-                &light_bind_group_layout_desc
-            ]));
+            assert_eq!(
+                shader.layout_matches(&[
+                    &PerspectiveCamera::layout_desc(),
+                    &light_bind_group_layout_desc
+                ]),
+                Ok(())
+            );
             RenderPipeline::new(
                 &device,
                 &light_render_pipeline_layout,
@@ -432,13 +438,17 @@ impl State {
                 return;
             }
         };
-        if !shader.layout_matches(&[
+        if let Err(errors) = shader.layout_matches(&[
             &get_texture_layout_desc(),
             &PerspectiveCamera::layout_desc(),
             &get_light_layout_desc(),
             &self.cubemap.layout_desc(),
         ]) {
-            self.shader_compile_error = Some("Shader layout doesn't match!".to_string());
+            self.shader_compile_error = Some(errors.iter().fold(String::new(), |mut acc, err| {
+                acc.push_str(err);
+                acc.push('\n');
+                acc
+            }));
             return;
         }
         self.render_pipeline = RenderPipeline::new(

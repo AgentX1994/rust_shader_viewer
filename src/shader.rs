@@ -64,53 +64,78 @@ struct OwningBindGroupLayoutDescriptor {
 }
 
 impl OwningBindGroupLayoutDescriptor {
-    fn check_compatible(&self, other: &wgpu::BindGroupLayoutDescriptor) -> bool {
+    fn check_compatible(&self, other: &wgpu::BindGroupLayoutDescriptor) -> Result<(), Vec<String>> {
+        let mut errors = vec![];
+        let name = self.label.as_deref().unwrap_or("<No Name>");
         if self.entries.len() != other.entries.len() {
-            false
-        } else {
-            let mut my_entries_sorted = self.entries.clone();
-            my_entries_sorted.sort_by(|ent1, ent2| ent1.binding.cmp(&ent2.binding));
-            let mut other_entries_sorted = other.entries.to_owned();
-            other_entries_sorted.sort_by(|ent1, ent2| ent1.binding.cmp(&ent2.binding));
-            for (entry1, entry2) in my_entries_sorted.iter().zip(other_entries_sorted) {
-                if entry1.binding != entry2.binding {
-                    return false;
-                }
-                // TODO figure out how to do this
-                if !entry2.visibility.intersects(entry1.visibility) {
-                    return false;
-                }
-                if entry1.ty != entry2.ty {
-                    use wgpu::{BindingType, SamplerBindingType, TextureSampleType};
-                    match (entry1.ty, entry2.ty) {
-                        (
-                            BindingType::Texture {
-                                sample_type: TextureSampleType::Float { filterable: true },
-                                ..
-                            },
-                            BindingType::Texture {
-                                sample_type: TextureSampleType::Float { filterable: false },
-                                ..
-                            },
-                        ) => (),
-                        (
-                            BindingType::Sampler(SamplerBindingType::Filtering),
-                            BindingType::Sampler(SamplerBindingType::NonFiltering),
-                        ) => (),
-                        _ => return false,
-                    }
-                }
-                if let Some(entry1_count) = &entry1.count {
-                    if let Some(entry2_count) = &entry2.count {
-                        if entry1_count > entry2_count {
-                            return false;
-                        }
-                    } else {
-                        return false;
+            errors.push(format!("{}: Not enough bindings!", name))
+        }
+        let mut my_entries_sorted = self.entries.clone();
+        my_entries_sorted.sort_by(|ent1, ent2| ent1.binding.cmp(&ent2.binding));
+        let mut other_entries_sorted = other.entries.to_owned();
+        other_entries_sorted.sort_by(|ent1, ent2| ent1.binding.cmp(&ent2.binding));
+        for (entry1, entry2) in my_entries_sorted.iter().zip(other_entries_sorted) {
+            if entry1.binding != entry2.binding {
+                errors.push(format!(
+                    "{}: Binding numbers don't match: {} and {}",
+                    name, entry1.binding, entry2.binding
+                ));
+                continue;
+            }
+            // TODO figure out how to do this
+            if !entry2.visibility.intersects(entry1.visibility) {
+                errors.push(format!(
+                    "{}: Binding visibilities don't match: {:?} and {:?}",
+                    name, entry1.visibility, entry2.visibility
+                ));
+                continue;
+            }
+            if entry1.ty != entry2.ty {
+                use wgpu::{BindingType, SamplerBindingType, TextureSampleType};
+                match (entry1.ty, entry2.ty) {
+                    (
+                        BindingType::Texture {
+                            sample_type: TextureSampleType::Float { filterable: true },
+                            ..
+                        },
+                        BindingType::Texture {
+                            sample_type: TextureSampleType::Float { filterable: false },
+                            ..
+                        },
+                    ) => (),
+                    (
+                        BindingType::Sampler(SamplerBindingType::Filtering),
+                        BindingType::Sampler(SamplerBindingType::NonFiltering),
+                    ) => (),
+                    _ => {
+                        errors.push(format!(
+                            "{}: Binding types don't match: {:?} and {:?}",
+                            name, entry1.ty, entry2.ty
+                        ));
+                        continue;
                     }
                 }
             }
-            true
+            if let Some(entry1_count) = &entry1.count {
+                if let Some(entry2_count) = &entry2.count {
+                    if entry1_count > entry2_count {
+                        errors.push(format!(
+                            "{}: Shader expects a higher array count than the pipeline: {} > {}",
+                            name, entry1_count, entry2_count
+                        ));
+                    }
+                } else {
+                    errors.push(format!(
+                        "{}: Shader expects an array count, but pipeline does not",
+                        name
+                    ));
+                }
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
         }
     }
 }
@@ -381,13 +406,27 @@ impl Shader {
             .collect()
     }
 
-    pub fn layout_matches(&self, other: &[&wgpu::BindGroupLayoutDescriptor<'_>]) -> bool {
+    pub fn layout_matches(
+        &self,
+        other: &[&wgpu::BindGroupLayoutDescriptor<'_>],
+    ) -> Result<(), Vec<String>> {
         if self.layout.len() != other.len() {
-            return false;
+            return Err(vec!["Number of groups does not match!".to_string()]);
         }
-        self.layout
+        let errors = self
+            .layout
             .iter()
             .zip(other.iter())
-            .all(|(my_desc, other_desc)| my_desc.check_compatible(other_desc))
+            .map(|(my_desc, other_desc)| my_desc.check_compatible(other_desc))
+            .filter_map(|res| res.err())
+            .fold(Vec::with_capacity(self.layout.len()), |mut acc, v| {
+                acc.extend(v);
+                acc
+            });
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
     }
 }

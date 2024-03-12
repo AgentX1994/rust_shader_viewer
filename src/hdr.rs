@@ -80,7 +80,7 @@ impl HdrPipeline {
             include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/hdr.wgsl")),
         )
         .expect("Could not parse hdr shader");
-        assert!(shader.layout_matches(&[&desc]));
+        assert_eq!(shader.layout_matches(&[&desc]), Ok(()));
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
             bind_group_layouts: &[&layout],

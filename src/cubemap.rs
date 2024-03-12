@@ -80,7 +80,10 @@ impl CubeMapRenderer {
                 include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/sky.wgsl")),
             )
             .expect("Could not parse cubemap shader");
-            assert!(shader.layout_matches(&[camera_bind_group_layout_desc, &desc]));
+            assert_eq!(
+                shader.layout_matches(&[camera_bind_group_layout_desc, &desc]),
+                Ok(())
+            );
             RenderPipeline::new(
                 device,
                 &layout,
