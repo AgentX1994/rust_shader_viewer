@@ -281,7 +281,7 @@ impl CameraController {
 
         const MIN_FOVY: Rad<f32> = Rad(0.1);
         const MAX_FOVY: Rad<f32> = Rad(std::f32::consts::PI - 0.1);
-        projection.fovy += Rad(-self.scroll / 100.0);
+        projection.fovy += Rad(-self.scroll / 1_000.0);
         if projection.fovy <= MIN_FOVY {
             projection.fovy = MIN_FOVY;
         } else if projection.fovy >= MAX_FOVY {
