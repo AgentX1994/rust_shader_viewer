@@ -36,7 +36,7 @@ use camera::{Camera, CameraController, PerspectiveCamera, Projection};
 use cubemap::CubeMapRenderer;
 use light::LightUniform;
 use model::{Instance, LightRenderer, ModelRenderer, Vertex};
-use pipeline::RenderPipeline;
+use pipeline::{PipelineCreateInfo, RenderPipeline};
 use render_target::{RenderTarget, SurfaceTextureRenderTarget};
 use shader::Shader;
 use surface::Surface;
@@ -113,7 +113,6 @@ struct State {
     depth_texture: texture::Texture,
     shader_source: String,
     shader_compile_error: Option<String>,
-    render_pipeline_layout: wgpu::PipelineLayout,
     render_pipeline: RenderPipeline,
     light_render_pipeline: RenderPipeline,
     model: model::Model,
@@ -301,15 +300,16 @@ impl State {
                 ]),
                 Ok(())
             );
-            RenderPipeline::new(
-                &device,
-                &render_pipeline_layout,
-                hdr.format(),
-                Some(texture::Texture::DEPTH_FORMAT),
-                &[model::ModelVertex::layout(), Instance::desc()],
-                wgpu::PrimitiveTopology::TriangleList,
-                &shader,
-            )
+
+            let create_info = PipelineCreateInfo {
+                color_format: hdr.format(),
+                depth_format: Some(texture::Texture::DEPTH_FORMAT),
+                vertex_layouts: &[model::ModelVertex::layout(), Instance::desc()],
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                shader: &shader,
+                label: Some("Normal Pipeline"),
+            };
+            RenderPipeline::new(&device, render_pipeline_layout, create_info)
         };
 
         let light_render_pipeline_layout =
@@ -336,15 +336,16 @@ impl State {
                 ]),
                 Ok(())
             );
-            RenderPipeline::new(
-                &device,
-                &light_render_pipeline_layout,
-                hdr.format(),
-                Some(texture::Texture::DEPTH_FORMAT),
-                &[model::ModelVertex::layout()],
-                wgpu::PrimitiveTopology::TriangleList,
-                &shader,
-            )
+
+            let create_info = PipelineCreateInfo {
+                color_format: hdr.format(),
+                depth_format: Some(texture::Texture::DEPTH_FORMAT),
+                vertex_layouts: &[model::ModelVertex::layout()],
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                shader: &shader,
+                label: Some("Light Pipeline"),
+            };
+            RenderPipeline::new(&device, light_render_pipeline_layout, create_info)
         };
         let ui = EguiRenderer::new(&device, hdr.format(), None, 1, &window);
         Ok(Self {
@@ -356,7 +357,6 @@ impl State {
             camera_controller: CameraController::new(4.0, 1.0),
             mouse_pressed: false,
             depth_texture,
-            render_pipeline_layout,
             render_pipeline,
             shader_source,
             shader_compile_error: None,
@@ -451,15 +451,16 @@ impl State {
             }));
             return;
         }
-        self.render_pipeline = RenderPipeline::new(
-            &self.device,
-            &self.render_pipeline_layout,
-            self.hdr.format(),
-            Some(texture::Texture::DEPTH_FORMAT),
-            &[model::ModelVertex::layout(), Instance::desc()],
-            wgpu::PrimitiveTopology::TriangleList,
-            &shader,
-        );
+
+        let create_info = PipelineCreateInfo {
+            color_format: self.hdr.format(),
+            depth_format: Some(texture::Texture::DEPTH_FORMAT),
+            vertex_layouts: &[model::ModelVertex::layout(), Instance::desc()],
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            shader: &shader,
+            label: Some("Normal Pipeline"),
+        };
+        self.render_pipeline.recreate(&self.device, create_info);
     }
 
     fn load_shader<P: AsRef<Path>>(&mut self, shader_file_path: P) -> RendererResult<()> {
@@ -532,14 +533,14 @@ impl State {
                 .render(&mut render_pass, self.camera.bind_group());
             render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
 
-            render_pass.set_pipeline(&self.light_render_pipeline.pipeline);
+            render_pass.set_pipeline(self.light_render_pipeline.pipeline());
             render_pass.draw_light_model(
                 &self.model,
                 self.camera.bind_group(),
                 &self.light_bind_group,
             );
 
-            render_pass.set_pipeline(&self.render_pipeline.pipeline);
+            render_pass.set_pipeline(self.render_pipeline.pipeline());
             render_pass.draw_model_instanced(
                 &self.model,
                 self.camera.bind_group(),

@@ -2,39 +2,45 @@ use log::info;
 
 use crate::shader::Shader;
 
+pub struct PipelineCreateInfo<'a> {
+    pub color_format: wgpu::TextureFormat,
+    pub depth_format: Option<wgpu::TextureFormat>,
+    pub vertex_layouts: &'a [wgpu::VertexBufferLayout<'a>],
+    pub topology: wgpu::PrimitiveTopology,
+    pub shader: &'a Shader,
+    pub label: Option<&'a str>,
+}
+
 pub struct RenderPipeline {
-    pub pipeline: wgpu::RenderPipeline,
+    pipeline_layout: wgpu::PipelineLayout,
+    pipeline: wgpu::RenderPipeline,
 }
 
 impl RenderPipeline {
-    pub fn new(
+    fn create_pipeline(
         device: &wgpu::Device,
         layout: &wgpu::PipelineLayout,
-        color_format: wgpu::TextureFormat,
-        depth_format: Option<wgpu::TextureFormat>,
-        vertex_layouts: &[wgpu::VertexBufferLayout],
-        topology: wgpu::PrimitiveTopology,
-        shader: &Shader,
-    ) -> Self {
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Render Pipeline"),
+        create_info: PipelineCreateInfo,
+    ) -> wgpu::RenderPipeline {
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: create_info.label,
             layout: Some(layout),
             vertex: wgpu::VertexState {
-                module: shader.get_vertex_module(),
-                entry_point: shader.get_vertex_entry_point(),
-                buffers: vertex_layouts,
+                module: create_info.shader.get_vertex_module(),
+                entry_point: create_info.shader.get_vertex_entry_point(),
+                buffers: create_info.vertex_layouts,
             },
             fragment: Some(wgpu::FragmentState {
-                module: shader.get_fragment_module(),
-                entry_point: shader.get_fragment_entry_point(),
+                module: create_info.shader.get_fragment_module(),
+                entry_point: create_info.shader.get_fragment_entry_point(),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: color_format,
+                    format: create_info.color_format,
                     blend: Some(wgpu::BlendState::REPLACE),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
             primitive: wgpu::PrimitiveState {
-                topology,
+                topology: create_info.topology,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: Some(wgpu::Face::Back),
@@ -42,21 +48,44 @@ impl RenderPipeline {
                 unclipped_depth: false,
                 conservative: false,
             },
-            depth_stencil: depth_format.map(|format| wgpu::DepthStencilState {
-                format,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::LessEqual,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
+            depth_stencil: create_info
+                .depth_format
+                .map(|format| wgpu::DepthStencilState {
+                    format,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::LessEqual,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
             multisample: wgpu::MultisampleState {
                 count: 1,
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
             multiview: None,
-        });
-        info!("Pipeline created for shader {}", shader.name());
-        Self { pipeline }
+        })
+    }
+    pub fn new(
+        device: &wgpu::Device,
+        layout: wgpu::PipelineLayout,
+        create_info: PipelineCreateInfo,
+    ) -> Self {
+        let name = create_info.shader.name();
+        let pipeline = Self::create_pipeline(device, &layout, create_info);
+        info!("Pipeline created for shader {}", name);
+        Self {
+            pipeline_layout: layout,
+            pipeline,
+        }
+    }
+
+    pub fn recreate(&mut self, device: &wgpu::Device, create_info: PipelineCreateInfo) {
+        let name = create_info.shader.name();
+        self.pipeline = Self::create_pipeline(device, &self.pipeline_layout, create_info);
+        info!("Pipeline recreated for shader {}", name);
+    }
+
+    pub fn pipeline(&self) -> &wgpu::RenderPipeline {
+        &self.pipeline
     }
 }

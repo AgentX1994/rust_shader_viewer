@@ -1,5 +1,5 @@
 use crate::error::RendererResult;
-use crate::pipeline::RenderPipeline;
+use crate::pipeline::{PipelineCreateInfo, RenderPipeline};
 use crate::resources;
 use crate::shader::Shader;
 use crate::texture::{CubeTexture, Texture};
@@ -84,15 +84,15 @@ impl CubeMapRenderer {
                 shader.layout_matches(&[camera_bind_group_layout_desc, &desc]),
                 Ok(())
             );
-            RenderPipeline::new(
-                device,
-                &layout,
-                surface_format,
-                Some(Texture::DEPTH_FORMAT),
-                &[],
-                wgpu::PrimitiveTopology::TriangleList,
-                &shader,
-            )
+            let create_info = PipelineCreateInfo {
+                color_format: surface_format,
+                depth_format: Some(Texture::DEPTH_FORMAT),
+                vertex_layouts: &[],
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                shader: &shader,
+                label: Some("Cubemap Pipeline"),
+            };
+            RenderPipeline::new(device, layout, create_info)
         };
 
         Ok(Self {
@@ -141,7 +141,7 @@ impl CubeMapRenderer {
         render_pass: &mut wgpu::RenderPass<'a>,
         camera_bind_group: &'a wgpu::BindGroup,
     ) {
-        render_pass.set_pipeline(&self.pipeline.pipeline);
+        render_pass.set_pipeline(self.pipeline.pipeline());
         render_pass.set_bind_group(0, camera_bind_group, &[]);
         render_pass.set_bind_group(1, &self.bind_group, &[]);
         render_pass.draw(0..3, 0..1);

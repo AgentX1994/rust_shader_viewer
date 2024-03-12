@@ -155,10 +155,6 @@ impl PerspectiveCamera {
         queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&[self.uniform]));
     }
 
-    pub fn camera(&self) -> &Camera {
-        &self.camera
-    }
-
     pub const fn layout_desc() -> wgpu::BindGroupLayoutDescriptor<'static> {
         const LAYOUT_ENTRIES: [wgpu::BindGroupLayoutEntry; 1] = [wgpu::BindGroupLayoutEntry {
             binding: 0,

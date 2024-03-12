@@ -1,6 +1,6 @@
 use wgpu::Operations;
 
-use crate::{shader::Shader, texture, RenderPipeline};
+use crate::{pipeline::PipelineCreateInfo, shader::Shader, texture, RenderPipeline};
 
 /// Owns the render texture and controls tonemapping
 pub struct HdrPipeline {
@@ -87,15 +87,15 @@ impl HdrPipeline {
             push_constant_ranges: &[],
         });
 
-        let pipeline = RenderPipeline::new(
-            device,
-            &pipeline_layout,
-            surface_format,
-            None,
-            &[],
-            wgpu::PrimitiveTopology::TriangleList,
-            &shader,
-        );
+        let create_info = PipelineCreateInfo {
+            color_format: surface_format,
+            depth_format: None,
+            vertex_layouts: &[],
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            shader: &shader,
+            label: Some("HDR Pipeline"),
+        };
+        let pipeline = RenderPipeline::new(device, pipeline_layout, create_info);
 
         Self {
             pipeline,
@@ -158,7 +158,7 @@ impl HdrPipeline {
             depth_stencil_attachment: None,
             ..Default::default()
         });
-        pass.set_pipeline(&self.pipeline.pipeline);
+        pass.set_pipeline(self.pipeline.pipeline());
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.draw(0..3, 0..1);
     }
