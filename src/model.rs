@@ -1,6 +1,9 @@
 use std::ops::Range;
 
-use wgpu::{vertex_attr_array, VertexAttribute};
+use bytemuck::Zeroable;
+use cgmath::{Matrix, SquareMatrix};
+use log::error;
+use wgpu::{util::DeviceExt, vertex_attr_array, VertexAttribute};
 
 use crate::texture;
 
@@ -92,9 +95,74 @@ impl Material {
     }
 }
 
+pub struct InstanceId(usize);
+
 pub struct Model {
     pub meshes: Vec<Mesh>,
     pub materials: Vec<Material>,
+    pub instances: Vec<InstanceRaw>,
+    pub instance_buffer: wgpu::Buffer,
+}
+
+impl Model {
+    pub fn new_instance(&mut self) -> InstanceId {
+        let id = InstanceId(self.instances.len());
+        self.instances.push(InstanceRaw::zeroed());
+        id
+    }
+
+    pub fn update_instance(&mut self, id: &InstanceId, transform: cgmath::Matrix4<f32>) {
+        match self.instances.get_mut(id.0) {
+            Some(instance) => {
+                instance.model = transform.into();
+                let inv_trans = match transform.invert() {
+                    Some(t) => t.transpose(),
+                    None => {
+                        error!("Singular matrix!");
+                        cgmath::Matrix4::identity()
+                    }
+                };
+                instance.normal = cgmath::Matrix3 {
+                    x: cgmath::Vector3 {
+                        x: inv_trans.x.x,
+                        y: inv_trans.x.y,
+                        z: inv_trans.x.z,
+                    },
+                    y: cgmath::Vector3 {
+                        x: inv_trans.y.x,
+                        y: inv_trans.y.y,
+                        z: inv_trans.y.z,
+                    },
+                    z: cgmath::Vector3 {
+                        x: inv_trans.z.x,
+                        y: inv_trans.z.y,
+                        z: inv_trans.z.z,
+                    },
+                }
+                .into()
+            }
+            None => todo!(),
+        }
+    }
+
+    pub fn update_instance_buffer(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        // Resize buffer if needed
+        if self.instances.len() * std::mem::size_of::<InstanceRaw>()
+            != self.instance_buffer.size() as usize
+        {
+            self.instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Instance Buffer"),
+                contents: bytemuck::cast_slice(&self.instances),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            });
+        } else {
+            queue.write_buffer(
+                &self.instance_buffer,
+                0,
+                bytemuck::cast_slice(&self.instances),
+            );
+        }
+    }
 }
 
 #[repr(C)]
@@ -104,30 +172,7 @@ pub struct InstanceRaw {
     normal: [[f32; 3]; 3],
 }
 
-#[allow(dead_code)]
-pub struct Instance {
-    pub position: cgmath::Vector3<f32>,
-    pub rotation: cgmath::Quaternion<f32>,
-    pub rotation_speed: f32,
-    pub rotation_axis: cgmath::Vector3<f32>,
-}
-
-impl Instance {
-    pub fn to_raw(&self) -> InstanceRaw {
-        let model = (cgmath::Matrix4::from_translation(self.position)
-            * cgmath::Matrix4::from(self.rotation))
-        .into();
-        let normal = cgmath::Matrix3::from(self.rotation).into();
-        InstanceRaw { model, normal }
-    }
-
-    pub fn update(&mut self) {
-        // self.rotation = cgmath::Quaternion::from_axis_angle(
-        //     self.rotation_axis,
-        //     cgmath::Rad(self.rotation_speed),
-        // ) * self.rotation;
-    }
-
+impl InstanceRaw {
     pub fn desc() -> wgpu::VertexBufferLayout<'static> {
         use std::mem;
         const ATTRIBUTES: [VertexAttribute; 7] = vertex_attr_array![
@@ -233,6 +278,7 @@ where
         environment_bind_group: &'b wgpu::BindGroup,
         instances: Range<u32>,
     ) {
+        self.set_vertex_buffer(1, model.instance_buffer.slice(..));
         for mesh in &model.meshes {
             let material = &model.materials[mesh.material];
             self.draw_mesh_instanced(
@@ -308,6 +354,7 @@ where
         light_bind_group: &'b wgpu::BindGroup,
         instances: Range<u32>,
     ) {
+        self.set_vertex_buffer(1, model.instance_buffer.slice(..));
         for mesh in &model.meshes {
             self.draw_light_mesh_instanced(
                 mesh,

@@ -175,7 +175,17 @@ pub async fn load_model(
         })
         .collect::<Vec<_>>();
 
-    Ok(model::Model { meshes, materials })
+    Ok(model::Model {
+        meshes,
+        materials,
+        instances: Default::default(),
+        instance_buffer: device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Instance Buffer"),
+            size: 0,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }),
+    })
 }
 
 pub struct HdrLoader {

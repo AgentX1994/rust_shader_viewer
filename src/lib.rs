@@ -1,12 +1,13 @@
 use std::{
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
 use egui::{Color32, RichText};
 use egui_wgpu::ScreenDescriptor;
 use error::RendererResult;
+use scene_tree::SceneTree;
 use winit::{
     event::*,
     event_loop::EventLoop,
@@ -27,6 +28,7 @@ mod model;
 mod pipeline;
 mod render_target;
 mod resources;
+mod scene_tree;
 mod shader;
 mod surface;
 mod texture;
@@ -35,12 +37,14 @@ mod ui;
 use camera::{Camera, CameraController, PerspectiveCamera, Projection};
 use cubemap::CubeMapRenderer;
 use light::LightUniform;
-use model::{Instance, LightRenderer, ModelRenderer, Vertex};
+use model::{LightRenderer, ModelRenderer, Vertex};
 use pipeline::{PipelineCreateInfo, RenderPipeline};
 use render_target::{RenderTarget, SurfaceTextureRenderTarget};
 use shader::Shader;
 use surface::Surface;
 use ui::{highlight, CodeTheme, EguiDrawParams, EguiRenderer};
+
+use crate::model::InstanceRaw;
 
 const fn get_texture_layout_desc() -> wgpu::BindGroupLayoutDescriptor<'static> {
     const LAYOUT_ENTRIES: [wgpu::BindGroupLayoutEntry; 4] = [
@@ -115,9 +119,8 @@ struct State {
     shader_compile_error: Option<String>,
     render_pipeline: RenderPipeline,
     light_render_pipeline: RenderPipeline,
-    model: model::Model,
-    instances: Vec<Instance>,
-    instance_buffer: wgpu::Buffer,
+    scene_tree: SceneTree,
+    model: Arc<Mutex<model::Model>>,
     light: LightUniform,
     light_buffer: wgpu::Buffer,
     light_bind_group: wgpu::BindGroup,
@@ -187,44 +190,38 @@ impl State {
 
         let camera = PerspectiveCamera::new(&device, camera, projection);
 
+        let mut scene_tree = SceneTree::default();
+
         // Create instances
         const NUM_INSTANCE_PER_ROW: usize = 10;
-        let model = resources::load_model("cube.obj", &device, &queue, &texture_bind_group_layout)
-            .await
-            .expect("Failed to load model!");
+        let model = Arc::new(Mutex::new(
+            resources::load_model("cube.obj", &device, &queue, &texture_bind_group_layout)
+                .await
+                .expect("Failed to load model!"),
+        ));
 
         const SPACE_BETWEEN: f32 = 3.0;
-        let instances = (0..NUM_INSTANCE_PER_ROW)
-            .flat_map(|z| {
-                (0..NUM_INSTANCE_PER_ROW).map(move |x| {
-                    let x = SPACE_BETWEEN * (x as f32 - NUM_INSTANCE_PER_ROW as f32 / 2.0);
-                    let z = SPACE_BETWEEN * (z as f32 - NUM_INSTANCE_PER_ROW as f32 / 2.0);
-                    let position = cgmath::Vector3 { x, y: 0.0, z };
-                    let rotation = if position.is_zero() {
-                        cgmath::Quaternion::from_axis_angle(
-                            cgmath::Vector3::unit_z(),
-                            cgmath::Deg(0.0),
-                        )
-                    } else {
-                        cgmath::Quaternion::from_axis_angle(position.normalize(), cgmath::Deg(45.0))
-                    };
+        for z in 0..NUM_INSTANCE_PER_ROW {
+            for x in 0..NUM_INSTANCE_PER_ROW {
+                let x = SPACE_BETWEEN * (x as f32 - NUM_INSTANCE_PER_ROW as f32 / 2.0);
+                let z = SPACE_BETWEEN * (z as f32 - NUM_INSTANCE_PER_ROW as f32 / 2.0);
+                let position = cgmath::Vector3 { x, y: 0.0, z };
+                let rotation = if position.is_zero() {
+                    cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_z(), cgmath::Deg(0.0))
+                } else {
+                    cgmath::Quaternion::from_axis_angle(position.normalize(), cgmath::Deg(45.0))
+                };
 
-                    Instance {
-                        position,
-                        rotation,
-                        rotation_speed: 0.025f32,
-                        rotation_axis: cgmath::Vector3::unit_y(),
-                    }
-                })
-            })
-            .collect::<Vec<Instance>>();
-        let instance_data = instances.iter().map(Instance::to_raw).collect::<Vec<_>>();
-
-        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Instance Buffer"),
-            contents: bytemuck::cast_slice(&instance_data),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        });
+                let node_handle = scene_tree.new_node();
+                let mut node = scene_tree
+                    .get_mut(&node_handle)
+                    .expect("We just created this node!");
+                node.update_local_transform(
+                    cgmath::Matrix4::from_translation(position) * cgmath::Matrix4::from(rotation),
+                );
+                node.set_model(model.clone());
+            }
+        }
 
         let light = LightUniform::new([2.0, 2.0, 2.0], [1.0, 1.0, 1.0]);
 
@@ -304,7 +301,7 @@ impl State {
             let create_info = PipelineCreateInfo {
                 color_format: hdr.format(),
                 depth_format: Some(texture::Texture::DEPTH_FORMAT),
-                vertex_layouts: &[model::ModelVertex::layout(), Instance::desc()],
+                vertex_layouts: &[model::ModelVertex::layout(), InstanceRaw::desc()],
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 shader: &shader,
                 label: Some("Normal Pipeline"),
@@ -361,9 +358,8 @@ impl State {
             shader_source,
             shader_compile_error: None,
             light_render_pipeline,
+            scene_tree,
             model,
-            instances,
-            instance_buffer,
             light,
             light_buffer,
             light_bind_group,
@@ -455,7 +451,7 @@ impl State {
         let create_info = PipelineCreateInfo {
             color_format: self.hdr.format(),
             depth_format: Some(texture::Texture::DEPTH_FORMAT),
-            vertex_layouts: &[model::ModelVertex::layout(), Instance::desc()],
+            vertex_layouts: &[model::ModelVertex::layout(), InstanceRaw::desc()],
             topology: wgpu::PrimitiveTopology::TriangleList,
             shader: &shader,
             label: Some("Normal Pipeline"),
@@ -475,19 +471,11 @@ impl State {
         self.camera
             .update(&mut self.camera_controller, dt, &self.queue);
 
-        for ele in &mut self.instances {
-            ele.update();
-        }
-        let instance_data = self
-            .instances
-            .iter()
-            .map(Instance::to_raw)
-            .collect::<Vec<_>>();
-        self.queue.write_buffer(
-            &self.instance_buffer,
-            0,
-            bytemuck::cast_slice(&instance_data),
-        );
+        self.scene_tree.update_transforms();
+        self.model
+            .lock()
+            .expect("Mutex Poisoned")
+            .update_instance_buffer(&self.device, &self.queue);
 
         // Update light
         let old_position: cgmath::Vector3<_> = self.light.position.into();
@@ -508,6 +496,7 @@ impl State {
                 label: Some("Render Encoder"),
             });
         {
+            let model_guard = self.model.lock().expect("Poisoned Mutex");
             let mut render_pass = cmd_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -531,22 +520,21 @@ impl State {
             });
             self.cubemap
                 .render(&mut render_pass, self.camera.bind_group());
-            render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
 
             render_pass.set_pipeline(self.light_render_pipeline.pipeline());
             render_pass.draw_light_model(
-                &self.model,
+                &model_guard,
                 self.camera.bind_group(),
                 &self.light_bind_group,
             );
 
             render_pass.set_pipeline(self.render_pipeline.pipeline());
             render_pass.draw_model_instanced(
-                &self.model,
+                &model_guard,
                 self.camera.bind_group(),
                 &self.light_bind_group,
                 self.cubemap.bind_group(),
-                0..self.instances.len() as u32,
+                0..model_guard.instances.len() as u32,
             );
         }
         let size = self.surface.extent();
