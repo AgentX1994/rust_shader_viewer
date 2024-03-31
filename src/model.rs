@@ -123,21 +123,9 @@ impl Model {
                     }
                 };
                 instance.normal = cgmath::Matrix3 {
-                    x: cgmath::Vector3 {
-                        x: inv_trans.x.x,
-                        y: inv_trans.x.y,
-                        z: inv_trans.x.z,
-                    },
-                    y: cgmath::Vector3 {
-                        x: inv_trans.y.x,
-                        y: inv_trans.y.y,
-                        z: inv_trans.y.z,
-                    },
-                    z: cgmath::Vector3 {
-                        x: inv_trans.z.x,
-                        y: inv_trans.z.y,
-                        z: inv_trans.z.z,
-                    },
+                    x: inv_trans.x.xyz(),
+                    y: inv_trans.y.xyz(),
+                    z: inv_trans.z.xyz(),
                 }
                 .into()
             }
@@ -181,9 +169,9 @@ impl InstanceRaw {
             6 => Float32x4,
             7 => Float32x4,
             8 => Float32x4,
-            9 => Float32x4,
-            10 => Float32x4,
-            11 => Float32x4,
+            9 => Float32x3,
+            10 => Float32x3,
+            11 => Float32x3,
         ];
         wgpu::VertexBufferLayout {
             array_stride: mem::size_of::<InstanceRaw>() as u64,

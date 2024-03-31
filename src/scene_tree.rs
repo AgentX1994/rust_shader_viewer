@@ -136,7 +136,7 @@ impl SceneTree {
             if let Some(parent_index) = &node.parent {
                 if index != parent_index.0 {
                     if let Some(parent) = self.nodes.get(parent_index.0) {
-                        node.update_local_transform(parent.borrow().cached_transform);
+                        node.refresh_transform(parent.borrow().cached_transform)
                     } else {
                         warn!("Node has invalid parent index: {}", parent_index.0);
                     }
